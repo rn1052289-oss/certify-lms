@@ -128,7 +128,7 @@ class OnboardingTest extends TestCase
 
         $response = $this->get($url);
 
-        $response->assertViewIs('auth.invitation-invalid');
+        $response->assertStatus(410);
     }
 
     public function test_show_renders_invalid_view_when_user_status_not_invited(): void
