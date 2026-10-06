@@ -240,7 +240,9 @@ class MeetingController extends Controller
                 'canceled_at' => now(),
             ]);
 
-            ($refundAction)($locked->student, $locked->id);
+            $student = User::withTrashed()->findOrFail($locked->student_id);
+
+            ($refundAction)($student, $locked->id);
         });
 
         return redirect()
