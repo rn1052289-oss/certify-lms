@@ -43,14 +43,17 @@ final class OnboardAction
     public function __invoke(Invitation $invitation, array $validated): User
     {
         $user = DB::transaction(function () use ($invitation, $validated) {
-            $invitation->refresh();
-            $user = $invitation->user;
+            $lockedInvitation = Invitation::query()
+                ->lockForUpdate()
+                ->findOrFail($invitation->id);
+
+            $user = $lockedInvitation->user;
 
             if (
                 $user === null
-                || $invitation->status !== InvitationStatus::Pending
-                || $invitation->expires_at === null
-                || $invitation->expires_at->isPast()
+                || $lockedInvitation->status !== InvitationStatus::Pending
+                || $lockedInvitation->expires_at === null
+                || $lockedInvitation->expires_at->isPast()
                 || $user->status !== UserStatus::Invited
             ) {
                 throw new InvalidInvitationTokenException;
@@ -92,7 +95,7 @@ final class OnboardAction
 
             $user->forceFill($attrs)->save();
 
-            $invitation->forceFill([
+            $lockedInvitation->forceFill([
                 'status' => InvitationStatus::Accepted,
                 'accepted_at' => $now,
             ])->save();
