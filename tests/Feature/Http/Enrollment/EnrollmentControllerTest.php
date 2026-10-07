@@ -7,6 +7,7 @@ namespace Tests\Feature\Http\Enrollment;
 use App\Enums\EnrollmentStatus;
 use App\Models\Certification;
 use App\Models\Enrollment;
+use App\Models\EnrollmentGoal;
 use App\Models\MockExam;
 use App\Models\MockExamSession;
 use App\Models\User;
@@ -34,6 +35,22 @@ class EnrollmentControllerTest extends TestCase
         $response->assertViewHas('enrollments', function ($enrollments) use ($ownEnrollment, $otherEnrollment) {
             return $enrollments->pluck('id')->contains($ownEnrollment->id)
                 && ! $enrollments->pluck('id')->contains($otherEnrollment->id);
+        });
+    }
+
+    public function test_index_includes_goal_count_for_student_enrollments(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+        $enrollment = Enrollment::factory()->for($student)->create();
+        EnrollmentGoal::factory()->forEnrollment($enrollment)->count(2)->create();
+
+        $response = $this->actingAs($student)->get(route('enrollments.index'));
+
+        $response->assertStatus(200);
+        $response->assertViewHas('enrollments', function ($enrollments) use ($enrollment) {
+            $result = $enrollments->firstWhere('id', $enrollment->id);
+
+            return $result !== null && $result->goals_count === 2;
         });
     }
 
@@ -179,11 +196,14 @@ class EnrollmentControllerTest extends TestCase
     {
         $student = User::factory()->student()->inProgress()->create();
         $enrollment = Enrollment::factory()->for($student)->learning()->create();
+        $goal = EnrollmentGoal::factory()->forEnrollment($enrollment)->create();
 
         $response = $this->actingAs($student)->delete(route('enrollments.destroy', $enrollment));
 
+        $response->assertStatus(302);
         $response->assertRedirect(route('enrollments.index'));
         $this->assertSoftDeleted('enrollments', ['id' => $enrollment->id]);
+        $this->assertDatabaseMissing('enrollment_goals', ['id' => $goal->id]);
     }
 
     public function test_destroy_rejects_other_student(): void
