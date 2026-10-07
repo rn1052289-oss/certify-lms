@@ -38,6 +38,22 @@ class EnrollmentControllerTest extends TestCase
         });
     }
 
+    public function test_index_includes_goal_count_for_student_enrollments(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+        $enrollment = Enrollment::factory()->for($student)->create();
+        EnrollmentGoal::factory()->forEnrollment($enrollment)->count(2)->create();
+
+        $response = $this->actingAs($student)->get(route('enrollments.index'));
+
+        $response->assertStatus(200);
+        $response->assertViewHas('enrollments', function ($enrollments) use ($enrollment) {
+            $result = $enrollments->firstWhere('id', $enrollment->id);
+
+            return $result !== null && $result->goals_count === 2;
+        });
+    }
+
     public function test_show_allows_owner_student(): void
     {
         $student = User::factory()->student()->inProgress()->create();
