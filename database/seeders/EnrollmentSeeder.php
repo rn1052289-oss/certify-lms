@@ -12,6 +12,7 @@ use App\Enums\UserStatus;
 use App\Models\Certificate;
 use App\Models\Certification;
 use App\Models\Enrollment;
+use App\Models\EnrollmentGoal;
 use App\Models\EnrollmentStatusLog;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
@@ -152,6 +153,32 @@ final class EnrollmentSeeder extends Seeder
                     'changed_reason' => '新規登録',
                 ],
             );
+
+            if ($index === 0) {
+                EnrollmentGoal::firstOrCreate(
+                    [
+                        'enrollment_id' => $enrollment->id,
+                        'title' => '過去問5年分を解く',
+                    ],
+                    [
+                        'description' => '試験形式に慣れるため、直近5年分の過去問を一通り解く。',
+                        'target_date' => now()->addDays(14)->toDateString(),
+                        'achieved_at' => null,
+                    ],
+                );
+
+                EnrollmentGoal::firstOrCreate(
+                    [
+                        'enrollment_id' => $enrollment->id,
+                        'title' => '公式問題集を1周する',
+                    ],
+                    [
+                        'description' => '基礎知識の確認として公式問題集を最後まで解く。',
+                        'target_date' => now()->subDays(7)->toDateString(),
+                        'achieved_at' => now()->subDays(3),
+                    ],
+                );
+            }
         }
     }
 
@@ -201,6 +228,13 @@ final class EnrollmentSeeder extends Seeder
             ]);
 
             $this->seedStatusLogs($enrollment, $pattern['state'], $student);
+
+            EnrollmentGoal::factory()->forEnrollment($enrollment)->create([
+                'title' => 'デモ学習目標 '.($i + 1),
+                'description' => '個人学習目標の閲覧権限を確認するためのデモデータです。',
+                'target_date' => now()->addDays(30 + $i)->toDateString(),
+                'achieved_at' => $i % 2 === 0 ? null : now()->subDay(),
+            ]);
 
             if ($pattern['state'] === 'passed') {
                 $this->issueCertificate($enrollment, $passedAt);
