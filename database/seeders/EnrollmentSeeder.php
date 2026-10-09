@@ -13,6 +13,7 @@ use App\Models\Certificate;
 use App\Models\Certification;
 use App\Models\Enrollment;
 use App\Models\EnrollmentGoal;
+use App\Models\EnrollmentNote;
 use App\Models\EnrollmentStatusLog;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
@@ -179,6 +180,30 @@ final class EnrollmentSeeder extends Seeder
                     ],
                 );
             }
+
+            foreach ($certification->coaches as $coach) {
+                EnrollmentNote::firstOrCreate(
+                    [
+                        'enrollment_id' => $enrollment->id,
+                        'author_user_id' => $coach->id,
+                    ],
+                    [
+                        'body' => '学習状況を確認しました。次回の指導では苦手分野を重点的に確認します。',
+                    ],
+                );
+            }
+
+            if ($index === 0 && $admin !== null) {
+                EnrollmentNote::firstOrCreate(
+                    [
+                        'enrollment_id' => $enrollment->id,
+                        'author_user_id' => $admin->id,
+                    ],
+                    [
+                        'body' => '管理者として学習状況を確認しました。',
+                    ],
+                );
+            }
         }
     }
 
@@ -235,6 +260,14 @@ final class EnrollmentSeeder extends Seeder
                 'target_date' => now()->addDays(30 + $i)->toDateString(),
                 'achieved_at' => $i % 2 === 0 ? null : now()->subDay(),
             ]);
+
+            foreach ($certification->coaches as $coach) {
+                EnrollmentNote::factory()->create([
+                    'enrollment_id' => $enrollment->id,
+                    'author_user_id' => $coach->id,
+                    'body' => 'デモ受講生の学習状況を確認するためのコーチメモです。',
+                ]);
+            }
 
             if ($pattern['state'] === 'passed') {
                 $this->issueCertificate($enrollment, $passedAt);
