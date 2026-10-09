@@ -15,6 +15,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EnrollmentController;
 use App\Http\Controllers\EnrollmentGoalController;
 use App\Http\Controllers\EnrollmentManagementController;
+use App\Http\Controllers\EnrollmentNoteController;
 use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\LearningHourTargetController;
 use App\Http\Controllers\MeetingController;
@@ -76,6 +77,16 @@ Route::middleware('auth')->group(function () {
     Route::get('enrollments/{enrollment}', [EnrollmentController::class, 'show'])
         ->withTrashed()
         ->name('enrollments.show');
+
+    // 受講生メモ — 担当コーチ・管理者のみ操作可。認可は EnrollmentNotePolicy で判定。
+    Route::post('enrollments/{enrollment}/notes', [EnrollmentNoteController::class, 'store'])
+        ->name('enrollments.notes.store');
+    Route::get('enrollment-notes/{note}/edit', [EnrollmentNoteController::class, 'edit'])
+        ->name('enrollment-notes.edit');
+    Route::patch('enrollment-notes/{note}', [EnrollmentNoteController::class, 'update'])
+        ->name('enrollment-notes.update');
+    Route::delete('enrollment-notes/{note}', [EnrollmentNoteController::class, 'destroy'])
+        ->name('enrollment-notes.destroy');
 });
 
 // ============================================================
