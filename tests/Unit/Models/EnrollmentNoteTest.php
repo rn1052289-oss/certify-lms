@@ -40,4 +40,14 @@ class EnrollmentNoteTest extends TestCase
 
         $this->assertTrue($enrollment->notes->contains('id', $note->id));
     }
+
+    public function test_author_relation_returns_soft_deleted_author_user(): void
+    {
+        $coach = User::factory()->coach()->create();
+        $note = EnrollmentNote::factory()->create(['author_user_id' => $coach->id]);
+
+        $coach->delete();
+
+        $this->assertTrue($note->fresh()->author->is($coach));
+    }
 }

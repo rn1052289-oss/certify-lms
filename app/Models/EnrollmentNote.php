@@ -39,6 +39,6 @@ class EnrollmentNote extends Model
      */
     public function author(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'author_user_id');
+        return $this->belongsTo(User::class, 'author_user_id')->withTrashed();
     }
 }
