@@ -4,64 +4,65 @@ declare(strict_types=1);
 
 namespace App\Actions\Fortify;
 
+use App\Enums\UserRole;
 use App\Models\User;
-use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Fortify\Contracts\UpdatesUserProfileInformation;
 
 /**
- * Fortify 公式パターンの Action（`Laravel\Fortify\Contracts\UpdatesUserProfileInformation` 実装）。
- * 本プロジェクトの `App\UseCases\{Entity}\{Action}Action` とは別物で、Fortify 固有のプロフィール更新フローから呼ばれる例外領域。
+ * ログイン中ユーザーのプロフィール情報を更新する。
+ *
+ * メールアドレス、ロール、アカウント状態は変更しない。
  */
 class UpdateUserProfileInformation implements UpdatesUserProfileInformation
 {
     /**
-     * Validate and update the given user's profile information.
-     *
-     * @param array<string, string> $input
+     * @param array<string, mixed> $input
      *
      * @throws ValidationException
      */
     public function update(User $user, array $input): void
     {
-        Validator::make($input, [
-            'name' => ['required', 'string', 'max:255'],
+        $rules = [
+            'name' => ['required', 'string', 'max:50'],
+            'email' => ['sometimes', 'required', 'string', Rule::in([$user->email])],
+            'bio' => ['nullable', 'string', 'max:1000'],
+        ];
 
-            'email' => [
-                'required',
-                'string',
-                'email',
-                'max:255',
-                Rule::unique('users')->ignore($user->id),
-            ],
-        ])->validateWithBag('updateProfileInformation');
-
-        if ($input['email'] !== $user->email &&
-            $user instanceof MustVerifyEmail) {
-            $this->updateVerifiedUser($user, $input);
+        if ($user->role === UserRole::Coach) {
+            $rules['meeting_url'] = ['nullable', 'string', 'url', 'max:500'];
         } else {
-            $user->forceFill([
-                'name' => $input['name'],
-                'email' => $input['email'],
-            ])->save();
+            $rules['meeting_url'] = ['prohibited'];
         }
-    }
 
-    /**
-     * Update the given verified user's profile information.
-     *
-     * @param array<string, string> $input
-     */
-    protected function updateVerifiedUser(User $user, array $input): void
-    {
-        $user->forceFill([
-            'name' => $input['name'],
-            'email' => $input['email'],
-            'email_verified_at' => null,
-        ])->save();
+        $validated = Validator::make(
+            $input,
+            $rules,
+            [
+                'name.required' => '氏名を入力してください。',
+            ],
+            [
+                'name' => '氏名',
+                'email' => 'メールアドレス',
+                'bio' => '自己紹介',
+                'meeting_url' => '固定面談 URL',
+            ]
+        )->validate();
 
-        $user->sendEmailVerificationNotification();
+        $attributes = [
+            'name' => $validated['name'],
+        ];
+
+        if (array_key_exists('bio', $validated)) {
+            $attributes['bio'] = $validated['bio'];
+        }
+
+        if ($user->role === UserRole::Coach && array_key_exists('meeting_url', $validated)) {
+            $attributes['meeting_url'] = $validated['meeting_url'];
+        }
+
+        $user->forceFill($attributes)->save();
     }
 }
