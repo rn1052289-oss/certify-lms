@@ -41,6 +41,9 @@ use App\Http\Controllers\SectionQuestionController;
 use App\Http\Controllers\SectionQuizController;
 use App\Http\Controllers\SectionQuizResultController;
 use App\Http\Controllers\Settings\AvailabilityController as SettingsAvailabilityController;
+use App\Http\Controllers\Settings\AvatarController;
+use App\Http\Controllers\Settings\PasswordController;
+use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\SettingsDefaultEnrollmentController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WeakDrillController;
@@ -69,6 +72,22 @@ Route::post('/onboarding/{invitation}', [OnboardingController::class, 'store'])
 Route::middleware('auth')->group(function () {
     // ダッシュボード
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
+
+    // 設定・プロフィール（全ロール本人、graduated を含む）
+    Route::get('settings/profile', [ProfileController::class, 'edit'])
+        ->name('settings.profile.edit');
+    Route::patch('settings/profile', [ProfileController::class, 'update'])
+        ->name('settings.profile.update');
+
+    // パスワード変更（全ロール本人、graduated を含む）
+    Route::put('settings/password', [PasswordController::class, 'update'])
+        ->name('settings.password.update');
+
+    // アバター画像の登録・削除
+    Route::post('settings/avatar', [AvatarController::class, 'store'])
+        ->name('settings.avatar.store');
+    Route::delete('settings/avatar', [AvatarController::class, 'destroy'])
+        ->name('settings.avatar.destroy');
 
     // 受講登録(3 ロール共有: student=自分のみ / coach=担当範囲 / admin=全件)。
     // 認可は EnrollmentPolicy::viewAny / view で 3 ロール対応済。閲覧範囲は EnrollmentController で
