@@ -10,6 +10,8 @@ use App\Models\Certification;
 use App\Models\Enrollment;
 use App\Models\LearningSession;
 use App\Models\Meeting;
+use App\Models\QaReply;
+use App\Models\QaThread;
 use App\Models\User;
 use App\Services\ChatUnreadCountService;
 use App\UseCases\Dashboard\FetchCoachDashboardAction;
@@ -136,6 +138,49 @@ class FetchCoachDashboardActionTest extends TestCase
         $vm = app(FetchCoachDashboardAction::class)($coach);
 
         $this->assertNull($vm->unreadChatCount);
+    }
+
+    public function test_unanswered_qa_excludes_replied_and_resolved_threads(): void
+    {
+        $coach = User::factory()->coach()->inProgress()->create();
+        $certification = Certification::factory()->published()->create();
+        $this->attachCoach($certification, $coach);
+
+        $unanswered = QaThread::factory()->create(['certification_id' => $certification->id]);
+        $answered = QaThread::factory()->create(['certification_id' => $certification->id]);
+        QaReply::factory()->create(['qa_thread_id' => $answered->id]);
+        QaThread::factory()->resolved()->create(['certification_id' => $certification->id]);
+
+        $action = $this->app->make(FetchCoachDashboardAction::class);
+        $vm = $action($coach);
+
+        $this->assertSame(1, $vm->unansweredQaCount);
+        $this->assertNotNull($vm->recentQaThreads);
+        $this->assertSame([$unanswered->id], $vm->recentQaThreads->pluck('id')->all());
+    }
+
+    public function test_qa_summary_excludes_unpublished_and_unassigned_certifications(): void
+    {
+        $coach = User::factory()->coach()->inProgress()->create();
+        $published = Certification::factory()->published()->create();
+        $draft = Certification::factory()->draft()->create();
+        $archived = Certification::factory()->archived()->create();
+        $unassigned = Certification::factory()->published()->create();
+        $this->attachCoach($published, $coach);
+        $this->attachCoach($draft, $coach);
+        $this->attachCoach($archived, $coach);
+
+        $visible = QaThread::factory()->create(['certification_id' => $published->id]);
+        QaThread::factory()->create(['certification_id' => $draft->id]);
+        QaThread::factory()->create(['certification_id' => $archived->id]);
+        QaThread::factory()->create(['certification_id' => $unassigned->id]);
+
+        $action = $this->app->make(FetchCoachDashboardAction::class);
+        $vm = $action($coach);
+
+        $this->assertSame(1, $vm->unansweredQaCount);
+        $this->assertNotNull($vm->recentQaThreads);
+        $this->assertSame([$visible->id], $vm->recentQaThreads->pluck('id')->all());
     }
 
     private function attachCoach(Certification $certification, User $coach): void
