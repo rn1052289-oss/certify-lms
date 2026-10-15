@@ -44,7 +44,7 @@
     <div class="flex-1"></div>
 
     {{-- 通知ベル + 通知ポップオーバー(ベル横アンカー) --}}
-    @if (Route::has('notifications.index'))
+    @if (in_array($user?->role, [\App\Enums\UserRole::Student, \App\Enums\UserRole::Coach], true) && Route::has('notifications.index'))
         <div class="relative" data-notification-popover-root>
             <button
                 type="button"

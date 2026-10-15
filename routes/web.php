@@ -27,6 +27,7 @@ use App\Http\Controllers\MockExamController;
 use App\Http\Controllers\MockExamQuestionController;
 use App\Http\Controllers\MockExamSessionController;
 use App\Http\Controllers\MockExamSessionMonitorController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PartController;
 use App\Http\Controllers\PlanController;
 use App\Http\Controllers\QaBoardModerationController;
@@ -110,6 +111,19 @@ Route::middleware('auth')->group(function () {
     Route::delete('enrollment-notes/{note}', [EnrollmentNoteController::class, 'destroy'])
         ->name('enrollment-notes.destroy');
 });
+
+// ============================================================
+// 受講生・コーチ共通 — 通知一覧・既読管理
+// 卒業ユーザーも過去の通知を確認可能
+// ============================================================
+Route::middleware(['auth', 'role:student,coach'])
+    ->prefix('notifications')
+    ->name('notifications.')
+    ->group(function () {
+        Route::get('/', [NotificationController::class, 'index'])->name('index');
+        Route::post('{notification}/read', [NotificationController::class, 'markAsRead'])->name('markAsRead');
+        Route::post('read-all', [NotificationController::class, 'markAllAsRead'])->name('markAllAsRead');
+    });
 
 // ============================================================
 // 受講生専用ルート(受講中ステータスのみ通過、卒業ステータスはロック)
