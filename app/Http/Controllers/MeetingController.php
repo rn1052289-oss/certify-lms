@@ -6,6 +6,8 @@ namespace App\Http\Controllers;
 
 use App\Enums\EnrollmentStatus;
 use App\Enums\MeetingStatus;
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Exceptions\MeetingQuota\InsufficientMeetingQuotaException;
 use App\Exceptions\Mentoring\MeetingAlreadyStartedException;
 use App\Exceptions\Mentoring\MeetingNoAvailableCoachException;
@@ -20,6 +22,8 @@ use App\Models\Enrollment;
 use App\Models\Meeting;
 use App\Models\MeetingMemo;
 use App\Models\User;
+use App\Notifications\MeetingCanceledNotification;
+use App\Notifications\MeetingReservedNotification;
 use App\Services\CoachMeetingLoadService;
 use App\Services\MeetingAvailabilityService;
 use App\Services\MeetingQuotaService;
@@ -204,6 +208,25 @@ class MeetingController extends Controller
             $transaction = ($consumeAction)($student, $meeting->id);
             $meeting->update(['meeting_quota_transaction_id' => $transaction->id]);
 
+            DB::afterCommit(function () use ($meeting, $student): void {
+                try {
+                    $coach = User::query()->find($meeting->coach_id);
+
+                    if (
+                        $coach === null
+                        || $coach->id === $student->id
+                        || $coach->role !== UserRole::Coach
+                        || $coach->status !== UserStatus::InProgress
+                    ) {
+                        return;
+                    }
+
+                    $coach->notify(new MeetingReservedNotification($meeting));
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            });
+
             return $meeting->fresh();
         });
 
@@ -243,6 +266,29 @@ class MeetingController extends Controller
             $student = User::withTrashed()->findOrFail($locked->student_id);
 
             ($refundAction)($student, $locked->id);
+
+            DB::afterCommit(function () use ($locked, $actor): void {
+                $actorIsStudent = $actor->id === $locked->student_id;
+                $recipientId = $actorIsStudent ? $locked->coach_id : $locked->student_id;
+                $recipientRole = $actorIsStudent ? UserRole::Coach : UserRole::Student;
+
+                try {
+                    $recipient = User::query()->find($recipientId);
+
+                    if (
+                        $recipient === null
+                        || $recipient->id === $actor->id
+                        || $recipient->role !== $recipientRole
+                        || $recipient->status !== UserStatus::InProgress
+                    ) {
+                        return;
+                    }
+
+                    $recipient->notify(new MeetingCanceledNotification($locked));
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            });
         });
 
         return redirect()
