@@ -9,6 +9,7 @@ use App\Enums\UserRole;
 use App\Enums\UserStatus;
 use App\Models\Meeting;
 use App\Models\MeetingReminderDelivery;
+use App\Models\User;
 use App\Notifications\MeetingReminderNotification;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
@@ -19,11 +20,11 @@ final class SendReminderAction
     /** @return array{sent: int, failed: int} */
     public function __invoke(Meeting $meeting, string $window, CarbonInterface $now): array
     {
-        return DB::transaction(function () use ($meeting, $window, $now): array {
+        $result = DB::transaction(function () use ($meeting, $window, $now): array {
             // 同じ面談の並行起動とキャンセルを直列化し、最新の状態を再確認する。
             $meeting = Meeting::query()->lockForUpdate()->find($meeting->id);
             $hours = $window === 'eve' ? 24 : 1;
-            $result = ['sent' => 0, 'failed' => 0];
+            $result = ['sent' => 0, 'failed' => 0, 'deliveries' => []];
 
             if ($meeting === null || $meeting->status !== MeetingStatus::Reserved
                 || $meeting->scheduled_at->lte($now) || $meeting->scheduled_at->gt($now->copy()->addHours($hours))) {
@@ -43,26 +44,59 @@ final class SendReminderAction
                 $notification = new MeetingReminderNotification($meeting, $window);
                 $notification->id = $delivery->notification_id;
 
-                foreach (['database', 'mail'] as $channel) {
-                    $sentAt = $channel.'_sent_at';
-
-                    if ($delivery->{$sentAt} !== null) {
-                        continue;
-                    }
-
+                if ($delivery->database_sent_at === null) {
                     try {
-                        $recipient->notifyNow($notification, [$channel]);
-                        $delivery->update([$sentAt => $now]);
+                        $recipient->notifyNow($notification, ['database']);
+                        $delivery->update(['database_sent_at' => $now]);
                         $result['sent']++;
                     } catch (\Throwable $exception) {
-                        // 成功済みチャネルは保持し、次の定期実行で失敗分だけを再試行する。
                         $result['failed']++;
                         report($exception);
                     }
+                }
+
+                if ($delivery->mail_sent_at === null) {
+                    $result['deliveries'][] = ['id' => $delivery->id, 'user_id' => $recipient->id];
                 }
             }
 
             return $result;
         });
+
+        // 面談のロックを解放してから外部SMTPへ接続する。
+        foreach ($result['deliveries'] as $pending) {
+            DB::transaction(function () use ($pending, $meeting, $window, $now, &$result): void {
+                // 当該受信者・当該タイミングの配信行だけをロックする。
+                $delivery = MeetingReminderDelivery::query()->lockForUpdate()->findOrFail($pending['id']);
+
+                if ($delivery->mail_sent_at !== null) {
+                    return;
+                }
+
+                $currentMeeting = Meeting::query()->find($meeting->id);
+                $recipient = User::query()->find($pending['user_id']);
+                $role = $pending['user_id'] === $currentMeeting?->student_id ? UserRole::Student : UserRole::Coach;
+
+                if ($currentMeeting === null || $currentMeeting->status !== MeetingStatus::Reserved
+                    || $currentMeeting->scheduled_at->lte($now)
+                    || $currentMeeting->scheduled_at->gt($now->copy()->addHours($window === 'eve' ? 24 : 1))
+                    || $recipient === null || $recipient->role !== $role || $recipient->status !== UserStatus::InProgress) {
+                    return;
+                }
+
+                try {
+                    $notification = new MeetingReminderNotification($currentMeeting, $window);
+                    $notification->id = $delivery->notification_id;
+                    $recipient->notifyNow($notification, ['mail']);
+                    $delivery->update(['mail_sent_at' => $now]);
+                    $result['sent']++;
+                } catch (\Throwable $exception) {
+                    $result['failed']++;
+                    report($exception);
+                }
+            });
+        }
+
+        return ['sent' => $result['sent'], 'failed' => $result['failed']];
     }
 }

@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Enums\MeetingStatus;
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Models\Meeting;
 use App\UseCases\Meeting\SendReminderAction;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder;
 
 class SendMeetingRemindersCommand extends Command
 {
@@ -34,6 +37,18 @@ class SendMeetingRemindersCommand extends Command
             ->where('status', MeetingStatus::Reserved)
             ->where('scheduled_at', '>', $now)
             ->where('scheduled_at', '<=', $now->copy()->addHours($window === 'eve' ? 24 : 1))
+            ->where(function (Builder $query) use ($window): void {
+                foreach (['student' => UserRole::Student, 'coach' => UserRole::Coach] as $relation => $role) {
+                    $query->orWhere(function (Builder $query) use ($window, $relation, $role): void {
+                        $query->whereHas($relation, fn (Builder $user) => $user
+                            ->where('role', $role)->where('status', UserStatus::InProgress))
+                            ->whereDoesntHave('reminderDeliveries', fn (Builder $delivery) => $delivery
+                                ->where('window', $window)
+                                ->whereColumn('meeting_reminder_deliveries.user_id', 'meetings.'.$relation.'_id')
+                                ->whereNotNull('database_sent_at')->whereNotNull('mail_sent_at'));
+                    });
+                }
+            })
             ->chunkById(100, function ($meetings) use ($action, $window, $now, &$sent, &$failed): void {
                 foreach ($meetings as $meeting) {
                     $result = $action($meeting, $window, $now);

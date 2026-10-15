@@ -33,8 +33,14 @@ class MeetingReminderNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         $data = $this->toDatabase($notifiable);
+        // リマインダー専用設定でSMTP待機を制限し、他のメール配信設定は変えない。
+        config(['mail.mailers.meeting_reminders' => array_replace(
+            config('mail.mailers.'.config('mail.default'), []),
+            ['timeout' => 30],
+        )]);
 
         return (new MailMessage)
+            ->mailer('meeting_reminders')
             ->subject('Certify LMS '.$data['title'])
             ->greeting('Certify LMS をご利用の皆様へ')
             ->line($data['message'])

@@ -12,6 +12,7 @@ use App\Models\User;
 use App\UseCases\Meeting\SendReminderAction;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -31,7 +32,7 @@ class SendMeetingRemindersCommandTest extends TestCase
         $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
         $this->assertDatabaseCount('notifications', 2);
         $this->assertDatabaseCount('meeting_reminder_deliveries', 2);
-        $this->assertSame(2, Mail::mailer()->getSymfonyTransport()->messages()->count());
+        $this->assertSame(2, Mail::mailer('meeting_reminders')->getSymfonyTransport()->messages()->count());
 
         foreach ([$meeting->student, $meeting->coach] as $recipient) {
             $notification = $recipient->notifications()->sole();
@@ -41,7 +42,7 @@ class SendMeetingRemindersCommandTest extends TestCase
         }
         $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
         $this->assertDatabaseCount('notifications', 2);
-        $this->assertSame(2, Mail::mailer()->getSymfonyTransport()->messages()->count());
+        $this->assertSame(2, Mail::mailer('meeting_reminders')->getSymfonyTransport()->messages()->count());
     }
 
     public function test_one_hour_before_sends_distinct_reminder_after_eve(): void
@@ -54,7 +55,7 @@ class SendMeetingRemindersCommandTest extends TestCase
 
         $this->assertDatabaseCount('notifications', 4);
         $this->assertDatabaseCount('meeting_reminder_deliveries', 4);
-        $this->assertSame(4, Mail::mailer()->getSymfonyTransport()->messages()->count());
+        $this->assertSame(4, Mail::mailer('meeting_reminders')->getSymfonyTransport()->messages()->count());
         $this->assertSame(2, $meeting->student->notifications()->count());
         $this->assertContains('面談の1時間前リマインダー', $meeting->student->notifications()->pluck('data')->pluck('title')->all());
     }
@@ -168,5 +169,25 @@ class SendMeetingRemindersCommandTest extends TestCase
             $this->assertSame('* * * * *', $event->expression);
             $this->assertTrue($event->withoutOverlapping);
         }
+    }
+
+    public function test_completed_meetings_are_not_locked_again_but_unsent_participant_is_selected(): void
+    {
+        $meeting = Meeting::factory()->create(['scheduled_at' => now()->addDay()]);
+        $meeting->student->update(['status' => UserStatus::Graduated]);
+        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
+        $queries = [];
+        DB::listen(function ($query) use (&$queries): void {
+            $queries[] = $query->sql;
+        });
+
+        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
+        $this->assertEmpty(array_filter($queries, fn ($query) => str_contains(strtolower($query), 'for update')));
+
+        $meeting->student->update(['status' => UserStatus::InProgress]);
+        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
+        $this->assertSame(1, $meeting->student->notifications()->count());
+        $this->assertSame(1, $meeting->coach->notifications()->count());
+        $this->assertDatabaseCount('meeting_reminder_deliveries', 2);
     }
 }
