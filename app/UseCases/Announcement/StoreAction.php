@@ -12,6 +12,7 @@ use App\Models\Announcement;
 use App\Models\User;
 use App\Notifications\AdminAnnouncementNotification;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -54,6 +55,16 @@ final class StoreAction
                     $user->notify($notification);
                 } catch (\Throwable $exception) {
                     $failedCount++;
+                    $failedUserIds = $announcement->failed_user_ids ?? [];
+                    $failedUserIds[] = $user->id;
+                    $announcement->update([
+                        'failed_count' => $failedCount,
+                        'failed_user_ids' => $failedUserIds,
+                    ]);
+                    Log::error('お知らせの通知配信に失敗しました。', [
+                        'announcement_id' => $announcement->id,
+                        'recipient_user_id' => $user->id,
+                    ]);
                     report($exception);
                 }
 

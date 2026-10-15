@@ -16,12 +16,15 @@ class Announcement extends Model
     protected $fillable = [
         'title', 'body', 'target_type', 'target_certification_id',
         'target_user_id', 'created_by_user_id', 'dispatched_count', 'dispatched_at',
+        'failed_count', 'failed_user_ids',
     ];
 
     protected $casts = [
         'target_type' => AnnouncementTargetType::class,
         'dispatched_count' => 'integer',
         'dispatched_at' => 'datetime',
+        'failed_count' => 'integer',
+        'failed_user_ids' => 'array',
     ];
 
     public function targetCertification(): BelongsTo

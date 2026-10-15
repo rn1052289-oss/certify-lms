@@ -33,7 +33,7 @@ class AnnouncementController extends Controller
         return redirect()->route('admin.announcements.show', $result['announcement'])
             ->with($result['failedCount'] === 0 ? 'success' : 'error', $result['failedCount'] === 0
                 ? 'お知らせを配信しました。'
-                : '一部の通知配信に失敗しました。配信履歴を確認してください。');
+                : $result['failedCount'].'件の通知配信に失敗しました。失敗した受講生IDは配信履歴とサーバーログに記録しました。');
     }
 
     public function show(Announcement $announcement): View

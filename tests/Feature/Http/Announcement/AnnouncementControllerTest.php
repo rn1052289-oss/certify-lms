@@ -192,6 +192,12 @@ class AnnouncementControllerTest extends TestCase
         $this->actingAs($admin)->post('/admin/announcements', $this->payload())->assertSessionHas('error');
 
         $this->assertSame(2, Announcement::query()->sole()->dispatched_count);
+        $announcement = Announcement::query()->sole();
+        $this->assertSame(2, $announcement->failed_count);
+        $this->assertEqualsCanonicalizing(
+            User::query()->where('role', 'student')->pluck('id')->all(),
+            $announcement->failed_user_ids,
+        );
         $this->assertDatabaseCount('notifications', 2);
     }
 
