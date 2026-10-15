@@ -47,6 +47,14 @@ class NotificationController extends Controller
         return redirect()->route('notifications.index');
     }
 
+    public function show(Request $request, string $notification): View
+    {
+        $record = $request->user()->notifications()->findOrFail($notification);
+        $record->markAsRead();
+
+        return view('notifications.show', ['notification' => $record]);
+    }
+
     public function markAllAsRead(Request $request): RedirectResponse
     {
         $request->user()->unreadNotifications()->update(['read_at' => now()]);
