@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\Auth\OnboardingController;
 use App\Http\Controllers\BrowseController;
 use App\Http\Controllers\CertificationCatalogController;
@@ -123,6 +124,7 @@ Route::middleware(['auth', 'role:student,coach'])
         Route::get('/', [NotificationController::class, 'index'])->name('index');
         Route::post('{notification}/read', [NotificationController::class, 'markAsRead'])->name('markAsRead');
         Route::post('read-all', [NotificationController::class, 'markAllAsRead'])->name('markAllAsRead');
+        Route::get('{notification}', [NotificationController::class, 'show'])->name('show');
     });
 
 // ============================================================
@@ -213,6 +215,11 @@ Route::middleware(['auth', 'role:student', 'active-learning'])
 // admin 専用ルート
 // ============================================================
 Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
+    // お知らせ — 即時配信・履歴閲覧のみ。編集・取消・再配信は提供しない。
+    Route::get('announcements', [AnnouncementController::class, 'index'])->name('admin.announcements.index');
+    Route::get('announcements/create', [AnnouncementController::class, 'create'])->name('admin.announcements.create');
+    Route::post('announcements', [AnnouncementController::class, 'store'])->name('admin.announcements.store');
+    Route::get('announcements/{announcement}', [AnnouncementController::class, 'show'])->name('admin.announcements.show');
     // ユーザー管理
     Route::get('users', [UserController::class, 'index'])->name('admin.users.index');
     Route::get('users/{user}', [UserController::class, 'show'])
