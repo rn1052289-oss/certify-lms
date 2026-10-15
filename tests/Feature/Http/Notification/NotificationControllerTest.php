@@ -31,6 +31,8 @@ class NotificationControllerTest extends TestCase
         $response->assertViewIs('notifications.index');
         $response->assertSee('本人の通知');
         $response->assertDontSee('他人の通知');
+        $response->assertSee('href="'.route('notifications.index').'"', false);
+        $response->assertSee('data-notification-popover-root', false);
     }
 
     public function test_coach_can_view_notifications(): void
@@ -42,6 +44,8 @@ class NotificationControllerTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSee('コーチ宛の通知');
+        $response->assertSee('href="'.route('notifications.index').'"', false);
+        $response->assertSee('data-notification-popover-root', false);
     }
 
     public function test_unread_tab_shows_only_unread_notifications(): void
@@ -123,6 +127,19 @@ class NotificationControllerTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSee('卒業前の通知');
+        $response->assertSee('href="'.route('notifications.index').'"', false);
+        $response->assertSee('data-notification-popover-root', false);
+    }
+
+    public function test_admin_does_not_see_notification_menu_or_bell(): void
+    {
+        $admin = User::factory()->admin()->inProgress()->create();
+
+        $response = $this->actingAs($admin)->get(route('settings.profile.edit'));
+
+        $response->assertStatus(200);
+        $response->assertDontSee('href="'.route('notifications.index').'"', false);
+        $response->assertDontSee('data-notification-popover-root', false);
     }
 
     public function test_external_notification_url_redirects_to_notification_index(): void
@@ -152,6 +169,38 @@ class NotificationControllerTest extends TestCase
         $firstPage->assertViewHas('notifications', fn ($notifications) => $notifications->count() === 20 && $notifications->total() === 21);
         $secondPage->assertStatus(200);
         $secondPage->assertViewHas('notifications', fn ($notifications) => $notifications->count() === 1 && $notifications->total() === 21);
+    }
+
+    public function test_unread_filter_is_preserved_when_following_pagination_links(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+
+        for ($i = 0; $i < 21; $i++) {
+            $this->createNotification($student, '未読通知'.($i + 1));
+        }
+
+        $this->createNotification($student, '既読通知', true);
+
+        $firstPage = $this->actingAs($student)->get(route('notifications.index', ['tab' => 'unread']));
+        $nextPageUrl = $firstPage->viewData('notifications')->nextPageUrl();
+
+        $this->assertNotNull($nextPageUrl);
+
+        $secondPage = $this->get($nextPageUrl);
+
+        $secondPage->assertStatus(200);
+        $secondPage->assertViewHas('tab', 'unread');
+        $secondPage->assertViewHas('notifications', fn ($notifications) => $notifications->count() === 1 && $notifications->total() === 21);
+        $secondPage->assertDontSee('既読通知');
+
+        $previousPageUrl = $secondPage->viewData('notifications')->previousPageUrl();
+
+        $this->assertNotNull($previousPageUrl);
+
+        $this->get($previousPageUrl)
+            ->assertStatus(200)
+            ->assertViewHas('tab', 'unread')
+            ->assertViewHas('notifications', fn ($notifications) => $notifications->count() === 20 && $notifications->total() === 21);
     }
 
     private function createNotification(User $recipient, string $title, bool $read = false, ?string $url = null): string

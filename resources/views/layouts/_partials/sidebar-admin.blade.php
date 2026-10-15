@@ -18,7 +18,6 @@
     <x-nav.section title="分析" :routes="['admin.stats.index']" />
     <x-nav.item route="admin.stats.index" icon="chart-bar" label="運用統計" />
 
-    <x-nav.section title="共通" :routes="['notifications.index', 'settings.profile.edit']" />
-    <x-nav.item route="notifications.index" icon="bell" label="通知" />
+    <x-nav.section title="共通" :routes="['settings.profile.edit']" />
     <x-nav.item route="settings.profile.edit" icon="cog-6-tooth" label="設定" />
 </x-nav.sidebar>

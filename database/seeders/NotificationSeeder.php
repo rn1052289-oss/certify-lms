@@ -59,8 +59,8 @@ final class NotificationSeeder extends Seeder
         $coachMessages = $room->messages()->with('sender')->where('sender_user_id', $coach->id)->get();
 
         if ($coachMessages->isNotEmpty()) {
-            // 固定受講生の通知一覧で 2 ページ目を確認できるよう 22 件用意する。
-            for ($i = 0; $i < 22; $i++) {
+            // 全件・未読のみの両方で 2 ページ目を確認できるよう 32 件用意する。
+            for ($i = 0; $i < 32; $i++) {
                 $message = $coachMessages->get($i % $coachMessages->count());
                 $this->insertNotification($student, new ChatMessageReceivedNotification($message), 10 + $i * 4, $i % 3 === 0);
             }
