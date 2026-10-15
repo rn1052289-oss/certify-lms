@@ -46,18 +46,25 @@ class FetchCoachDashboardActionTest extends TestCase
         $cert = Certification::factory()->published()->create();
         $this->attachCoach($cert, $coach);
         $enrollment = Enrollment::factory()->for($cert)->learning()->create();
+        $latest = now()->subDay()->startOfSecond();
 
         LearningSession::factory()
             ->forEnrollment($enrollment)
             ->forUser($enrollment->user)
             ->closed()
-            ->startedOn(now()->subDay())
+            ->startedOn($latest)
             ->create();
+        LearningSession::factory()->forEnrollment($enrollment)->forUser($enrollment->user)
+            ->closed()->startedOn($latest->copy()->subDays(2))->create();
+        $withoutActivity = Enrollment::factory()->for($cert)->learning()->create();
 
         $vm = app(FetchCoachDashboardAction::class)($coach);
 
-        $first = $vm->assignedEnrollments->first();
-        $this->assertNotNull($first->last_activity_at);
+        $first = $vm->assignedEnrollments->firstWhere('id', $enrollment->id);
+        $this->assertSame($latest->toDateTimeString(), $first->last_activity_at);
+        $this->assertNull($vm->assignedEnrollments->firstWhere('id', $withoutActivity->id)->last_activity_at);
+        $this->assertSame($enrollment->user->name, $first->user->name);
+        $this->assertSame($cert->name, $first->certification->name);
     }
 
     public function test_only_passed_and_learning_enrollments_are_displayed(): void
