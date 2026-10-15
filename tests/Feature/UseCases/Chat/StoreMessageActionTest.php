@@ -13,7 +13,9 @@ use App\Models\Enrollment;
 use App\Models\User;
 use App\Notifications\ChatMessageReceivedNotification;
 use App\UseCases\Chat\StoreMessageAction;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Notifications\Channels\MailChannel;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
@@ -160,5 +162,41 @@ class StoreMessageActionTest extends TestCase
         $action($student, $room, ['body' => '通知対象の確認です。']);
 
         Notification::assertNothingSent();
+    }
+
+    public function test_mail_failure_does_not_fail_message_or_skip_other_recipients(): void
+    {
+        Event::fake([ChatMessageSent::class]);
+
+        $student = User::factory()->student()->inProgress()->create();
+        $coaches = User::factory()->coach()->inProgress()->count(2)->create();
+        $certification = Certification::factory()->published()->create();
+        $enrollment = Enrollment::factory()->for($student)->for($certification)->create();
+        $room = ChatRoom::factory()->for($enrollment)->create();
+        ChatMember::factory()->create(['chat_room_id' => $room->id, 'user_id' => $student->id]);
+
+        foreach ($coaches as $coach) {
+            CertificationCoachAssignment::factory()->create([
+                'certification_id' => $certification->id,
+                'user_id' => $coach->id,
+            ]);
+            ChatMember::factory()->create(['chat_room_id' => $room->id, 'user_id' => $coach->id]);
+        }
+
+        $exception = new \RuntimeException('メール配信に失敗しました。');
+        $this->mock(ExceptionHandler::class)
+            ->shouldReceive('report')->once()->with($exception);
+        $channel = $this->mock(MailChannel::class);
+        $channel->shouldReceive('send')->once()->ordered()->andThrow($exception);
+        $channel->shouldReceive('send')->once()->ordered()->andReturnNull();
+
+        $message = app(StoreMessageAction::class)($student, $room, ['body' => '配信失敗時の確認です。']);
+
+        $this->assertDatabaseHas('chat_messages', ['id' => $message->id, 'body' => '配信失敗時の確認です。']);
+        $this->assertSame(1, $room->messages()->count());
+
+        foreach ($coaches as $coach) {
+            $this->assertSame(1, $coach->notifications()->count());
+        }
     }
 }

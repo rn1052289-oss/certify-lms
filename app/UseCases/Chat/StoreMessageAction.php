@@ -68,7 +68,11 @@ final class StoreMessageAction
                         continue;
                     }
 
-                    $recipient->notify(new ChatMessageReceivedNotification($message));
+                    try {
+                        $recipient->notify(new ChatMessageReceivedNotification($message));
+                    } catch (\Throwable $exception) {
+                        report($exception);
+                    }
                 }
             });
 

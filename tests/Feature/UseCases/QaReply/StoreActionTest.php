@@ -8,7 +8,9 @@ use App\Models\QaThread;
 use App\Models\User;
 use App\Notifications\QaReplyReceivedNotification;
 use App\UseCases\QaReply\StoreAction;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Notifications\Channels\MailChannel;
 use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
 
@@ -86,5 +88,24 @@ class StoreActionTest extends TestCase
 
         $this->assertDatabaseHas('qa_replies', ['id' => $reply->id]);
         Notification::assertNothingSent();
+    }
+
+    public function test_mail_failure_does_not_fail_reply(): void
+    {
+        $questioner = User::factory()->student()->inProgress()->create();
+        $author = User::factory()->coach()->inProgress()->create();
+        $thread = QaThread::factory()->create(['user_id' => $questioner->id]);
+
+        $exception = new \RuntimeException('メール配信に失敗しました。');
+        $this->mock(ExceptionHandler::class)
+            ->shouldReceive('report')->once()->with($exception);
+        $this->mock(MailChannel::class)
+            ->shouldReceive('send')->once()->andThrow($exception);
+
+        $reply = app(StoreAction::class)($thread, $author, ['body' => '配信失敗時の回答です。']);
+
+        $this->assertDatabaseHas('qa_replies', ['id' => $reply->id, 'body' => '配信失敗時の回答です。']);
+        $this->assertSame(1, $thread->replies()->count());
+        $this->assertSame(1, $questioner->notifications()->count());
     }
 }

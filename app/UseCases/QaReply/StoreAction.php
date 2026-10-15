@@ -44,7 +44,11 @@ final class StoreAction
                     return;
                 }
 
-                $questioner->notify(new QaReplyReceivedNotification($reply));
+                try {
+                    $questioner->notify(new QaReplyReceivedNotification($reply));
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
             });
 
             return $reply;
