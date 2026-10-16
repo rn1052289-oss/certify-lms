@@ -18,6 +18,7 @@ use App\UseCases\QaThread\StoreAction;
 use App\UseCases\QaThread\UnresolveAction;
 use App\UseCases\QaThread\UpdateAction;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 /**
@@ -86,10 +87,10 @@ class QaThreadController extends Controller
         return redirect()->route('qa-board.show', $thread)->with('success', '質問を更新しました。');
     }
 
-    public function destroy(QaThread $thread, DestroyAction $action): RedirectResponse
+    public function destroy(QaThread $thread, Request $request, DestroyAction $action): RedirectResponse
     {
         $this->authorize('delete', $thread);
-        $action($thread);
+        $action($thread, $request->user());
 
         return redirect()->route('qa-board.index')->with('success', '質問を削除しました。');
     }

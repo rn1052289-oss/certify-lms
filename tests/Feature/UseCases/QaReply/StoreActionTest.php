@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Notifications\QaReplyReceivedNotification;
 use App\UseCases\QaReply\StoreAction;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Notifications\Channels\MailChannel;
 use Illuminate\Support\Facades\Notification;
@@ -20,6 +21,24 @@ use Tests\TestCase;
 class StoreActionTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_reply_to_question_deleted_after_loading_is_not_saved(): void
+    {
+        Notification::fake();
+        $thread = QaThread::factory()->create();
+        $author = User::factory()->coach()->inProgress()->create();
+        QaThread::query()->whereKey($thread->id)->delete();
+
+        try {
+            app(StoreAction::class)($thread, $author, ['body' => '削除と競合した回答です。']);
+            $this->fail('削除済みの質問に回答できません。');
+        } catch (ModelNotFoundException $exception) {
+            $this->assertSame(QaThread::class, $exception->getModel());
+        }
+
+        $this->assertDatabaseCount('qa_replies', 0);
+        Notification::assertNothingSent();
+    }
 
     public function test_reply_notifies_questioner_but_not_author(): void
     {
