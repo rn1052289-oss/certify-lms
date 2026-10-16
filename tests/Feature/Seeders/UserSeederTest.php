@@ -14,6 +14,21 @@ class UserSeederTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_reuses_avatar_file_when_fixed_student_is_recreated(): void
+    {
+        Storage::fake('public');
+        $student = User::factory()->student()->create(['email' => 'student@certify-lms.test']);
+        $this->seed(UserAvatarSeeder::class);
+        $url = $student->fresh()->avatar_url;
+
+        $student->forceDelete();
+        $replacement = User::factory()->student()->create(['email' => 'student@certify-lms.test']);
+        $this->seed(UserAvatarSeeder::class);
+
+        $this->assertSame($url, $replacement->fresh()->avatar_url);
+        $this->assertEmpty(Storage::disk('public')->allFiles('avatars'));
+    }
+
     public function test_seeds_users_with_and_without_displayable_avatar(): void
     {
         Storage::fake('public');
@@ -22,11 +37,9 @@ class UserSeederTest extends TestCase
 
         $student = User::query()->where('email', 'student@certify-lms.test')->firstOrFail();
         $this->assertNotNull($student->avatar_url);
-        $this->assertStringStartsWith("/storage/avatars/{$student->id}/", $student->avatar_url);
-
-        $path = substr($student->avatar_url, strlen('/storage/'));
-        Storage::disk('public')->assertExists($path);
-        $this->assertSame('image/png', getimagesizefromstring(Storage::disk('public')->get($path))['mime']);
+        $this->assertSame('/images/seed-avatar.png', $student->avatar_url);
+        $this->assertFileExists(public_path($student->avatar_url));
+        $this->assertSame('image/png', getimagesize(public_path($student->avatar_url))['mime']);
         $this->assertTrue(User::query()->whereNull('avatar_url')->exists());
 
         $this->actingAs($student)->get(route('settings.profile.edit'))
@@ -34,6 +47,6 @@ class UserSeederTest extends TestCase
 
         $this->seed(UserAvatarSeeder::class);
         $this->assertSame($student->avatar_url, $student->fresh()->avatar_url);
-        $this->assertCount(1, Storage::disk('public')->allFiles('avatars'));
+        $this->assertEmpty(Storage::disk('public')->allFiles('avatars'));
     }
 }
