@@ -20,17 +20,19 @@ final class ArchiveAction
      */
     public function __invoke(Plan $plan, User $admin): Plan
     {
-        if ($plan->status !== PlanStatus::Published) {
-            throw PlanInvalidTransitionException::forArchive();
-        }
-
         return DB::transaction(function () use ($plan, $admin) {
-            $plan->update([
+            $lockedPlan = Plan::query()->lockForUpdate()->findOrFail($plan->id);
+
+            if ($lockedPlan->status !== PlanStatus::Published) {
+                throw PlanInvalidTransitionException::forArchive();
+            }
+
+            $lockedPlan->update([
                 'status' => PlanStatus::Archived->value,
                 'updated_by_user_id' => $admin->id,
             ]);
 
-            return $plan->fresh();
+            return $lockedPlan->fresh();
         });
     }
 }

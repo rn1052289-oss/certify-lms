@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\UseCases\Plan;
 
+use App\Enums\PlanStatus;
 use App\Exceptions\Plan\PlanNotDeletableException;
 use App\Models\Plan;
 use App\Models\User;
@@ -15,6 +16,34 @@ use Tests\TestCase;
 class DestroyActionTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_cannot_delete_plan_published_after_loading_draft(): void
+    {
+        $plan = Plan::factory()->draft()->create();
+        Plan::query()->whereKey($plan->id)->update(['status' => PlanStatus::Published->value]);
+
+        try {
+            (new DestroyAction)($plan);
+            $this->fail('公開済みのプランは削除できません。');
+        } catch (PlanNotDeletableException $exception) {
+            $this->assertDatabaseHas('plans', ['id' => $plan->id, 'status' => PlanStatus::Published->value]);
+        }
+    }
+
+    public function test_cannot_delete_plan_referenced_only_by_soft_deleted_user(): void
+    {
+        $plan = Plan::factory()->draft()->create();
+        $user = User::factory()->student()->create(['plan_id' => $plan->id]);
+        $user->delete();
+
+        try {
+            (new DestroyAction)($plan);
+            $this->fail('論理削除済みユーザーから参照されているプランは削除できません。');
+        } catch (PlanNotDeletableException $exception) {
+            $this->assertDatabaseHas('plans', ['id' => $plan->id]);
+            $this->assertSame($plan->id, $user->fresh()->plan_id);
+        }
+    }
 
     public function test_deletes_draft_plan_without_references(): void
     {
