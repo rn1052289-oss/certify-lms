@@ -6,6 +6,7 @@ namespace App\Policies;
 
 use App\Enums\MeetingStatus;
 use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Models\Meeting;
 use App\Models\User;
 
@@ -30,7 +31,8 @@ class MeetingPolicy
         return match ($user->role) {
             UserRole::Admin => true,
             UserRole::Coach => $meeting->coach_id === $user->id,
-            UserRole::Student => $meeting->student_id === $user->id,
+            UserRole::Student => $user->status === UserStatus::InProgress
+                && $meeting->student_id === $user->id,
         };
     }
 
@@ -42,6 +44,10 @@ class MeetingPolicy
     public function cancel(User $user, Meeting $meeting): bool
     {
         if ($meeting->status !== MeetingStatus::Reserved) {
+            return false;
+        }
+
+        if ($user->role === UserRole::Student && $user->status !== UserStatus::InProgress) {
             return false;
         }
 

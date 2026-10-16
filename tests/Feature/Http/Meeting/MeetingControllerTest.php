@@ -72,6 +72,45 @@ class MeetingControllerTest extends TestCase
         $this->actingAs($coach)->get(route('meetings.show', $meeting))->assertOk();
     }
 
+    public function test_graduated_student_cannot_view_own_meeting(): void
+    {
+        $student = User::factory()->student()->graduated()->create();
+        $meeting = Meeting::factory()->reserved()->forStudent($student)->create();
+
+        $this->actingAs($student)->get(route('meetings.show', $meeting))->assertForbidden();
+    }
+
+    public function test_graduated_student_cannot_cancel_own_meeting(): void
+    {
+        $student = User::factory()->student()->graduated()->create(['max_meetings' => 5]);
+        $meeting = Meeting::factory()->reserved()->forStudent($student)->create([
+            'scheduled_at' => now()->addDays(3)->startOfHour(),
+        ]);
+
+        $this->actingAs($student)->post(route('meetings.cancel', $meeting))->assertForbidden();
+
+        $this->assertSame(MeetingStatus::Reserved, $meeting->fresh()->status);
+        $this->assertDatabaseMissing('meeting_quota_transactions', [
+            'related_meeting_id' => $meeting->id,
+            'type' => MeetingQuotaTransactionType::Refunded->value,
+        ]);
+    }
+
+    public function test_coach_can_view_and_cancel_meeting_of_graduated_student(): void
+    {
+        $student = User::factory()->student()->graduated()->create();
+        $coach = User::factory()->coach()->create();
+        $meeting = Meeting::factory()->reserved()->forStudent($student)->forCoach($coach)->create([
+            'scheduled_at' => now()->addDays(3)->startOfHour(),
+        ]);
+
+        $this->actingAs($coach)->get(route('meetings.show', $meeting))->assertOk();
+        $this->actingAs(User::factory()->admin()->create())->get(route('meetings.show', $meeting))->assertOk();
+        $this->actingAs($coach)->post(route('meetings.cancel', $meeting))->assertRedirect();
+
+        $this->assertSame(MeetingStatus::Canceled, $meeting->fresh()->status);
+    }
+
     public function test_create_requires_enrollment_ownership(): void
     {
         $student = User::factory()->student()->inProgress()->create();
