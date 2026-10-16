@@ -20,17 +20,19 @@ final class PublishAction
      */
     public function __invoke(MeetingPack $plan, User $admin): MeetingPack
     {
-        if ($plan->status !== MeetingPackStatus::Draft) {
-            throw MeetingPackInvalidTransitionException::forPublish();
-        }
-
         return DB::transaction(function () use ($plan, $admin) {
-            $plan->update([
+            $lockedPlan = MeetingPack::query()->lockForUpdate()->findOrFail($plan->id);
+
+            if ($lockedPlan->status !== MeetingPackStatus::Draft) {
+                throw MeetingPackInvalidTransitionException::forPublish();
+            }
+
+            $lockedPlan->update([
                 'status' => MeetingPackStatus::Published->value,
                 'updated_by_user_id' => $admin->id,
             ]);
 
-            return $plan->fresh();
+            return $lockedPlan->fresh();
         });
     }
 }

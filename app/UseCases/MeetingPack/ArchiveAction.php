@@ -20,17 +20,19 @@ final class ArchiveAction
      */
     public function __invoke(MeetingPack $plan, User $admin): MeetingPack
     {
-        if ($plan->status !== MeetingPackStatus::Published) {
-            throw MeetingPackInvalidTransitionException::forArchive();
-        }
-
         return DB::transaction(function () use ($plan, $admin) {
-            $plan->update([
+            $lockedPlan = MeetingPack::query()->lockForUpdate()->findOrFail($plan->id);
+
+            if ($lockedPlan->status !== MeetingPackStatus::Published) {
+                throw MeetingPackInvalidTransitionException::forArchive();
+            }
+
+            $lockedPlan->update([
                 'status' => MeetingPackStatus::Archived->value,
                 'updated_by_user_id' => $admin->id,
             ]);
 
-            return $plan->fresh();
+            return $lockedPlan->fresh();
         });
     }
 }

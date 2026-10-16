@@ -16,6 +16,22 @@ class UnarchiveActionTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_rejects_transition_when_latest_status_is_invalid(): void
+    {
+        $admin = User::factory()->admin()->create();
+        $plan = MeetingPack::factory()->archived()->create();
+        $updatedBy = $plan->updated_by_user_id;
+        MeetingPack::query()->whereKey($plan->id)->update(['status' => MeetingPackStatus::Published->value]);
+
+        try {
+            (new UnarchiveAction)($plan, $admin);
+            $this->fail('最新状態が条件を満たさない遷移は拒否します。');
+        } catch (MeetingPackInvalidTransitionException $exception) {
+            $this->assertSame(MeetingPackStatus::Published, $plan->fresh()->status);
+            $this->assertSame($updatedBy, $plan->fresh()->updated_by_user_id);
+        }
+    }
+
     public function test_unarchives_archived_meeting_pack(): void
     {
         $admin = User::factory()->admin()->create();
