@@ -20,18 +20,22 @@ final class DestroyAction
      */
     public function __invoke(Plan $plan): void
     {
-        if ($plan->status !== PlanStatus::Draft) {
-            throw new PlanNotDeletableException;
-        }
+        DB::transaction(function () use ($plan) {
+            $lockedPlan = Plan::query()->lockForUpdate()->findOrFail($plan->id);
 
-        if ($plan->users()->exists()) {
-            throw new PlanNotDeletableException;
-        }
+            if ($lockedPlan->status !== PlanStatus::Draft) {
+                throw new PlanNotDeletableException;
+            }
 
-        if ($plan->userPlanLogs()->exists()) {
-            throw new PlanNotDeletableException;
-        }
+            if ($lockedPlan->users()->withTrashed()->exists()) {
+                throw new PlanNotDeletableException;
+            }
 
-        DB::transaction(fn () => $plan->delete());
+            if ($lockedPlan->userPlanLogs()->exists()) {
+                throw new PlanNotDeletableException;
+            }
+
+            $lockedPlan->delete();
+        });
     }
 }
