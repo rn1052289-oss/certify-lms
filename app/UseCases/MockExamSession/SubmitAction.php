@@ -31,6 +31,8 @@ final class SubmitAction
     public function __invoke(MockExamSession $session): MockExamSession
     {
         return DB::transaction(function () use ($session) {
+            $enrollment = $session->enrollment()->lockForUpdate()->firstOrFail();
+
             $session = MockExamSession::query()
                 ->lockForUpdate()
                 ->findOrFail($session->id);
@@ -47,7 +49,7 @@ final class SubmitAction
             ($this->grade)($session);
             $session->refresh();
 
-            $this->termJudgement->recalculate($session->enrollment);
+            $this->termJudgement->recalculate($enrollment);
 
             return $session;
         });
