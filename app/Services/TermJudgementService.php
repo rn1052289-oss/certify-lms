@@ -15,7 +15,7 @@ use App\Models\MockExamSession;
  * 実践ターム(mock_practice)、そうでなければ基礎ターム(basic_learning)。
  *
  * MockExamSession の状態変化を伴う各 Action(StartAction / SubmitAction / CancelAction 等) がトランザクション内で
- * 呼ぶ契約。現状の current_term と新判定が一致する場合は UPDATE しない(不要な書き込みを避ける)。
+ * 受講登録 → セッションの順でロックして呼ぶ契約。現状の current_term と新判定が一致する場合は UPDATE しない(不要な書き込みを避ける)。
  */
 final class TermJudgementService
 {
@@ -27,6 +27,7 @@ final class TermJudgementService
         $hasActiveMock = MockExamSession::query()
             ->where('enrollment_id', $enrollment->id)
             ->whereIn('status', ['in_progress', 'submitted', 'graded'])
+            ->lockForUpdate()
             ->exists();
 
         $newTerm = $hasActiveMock ? TermType::MockPractice : TermType::BasicLearning;
