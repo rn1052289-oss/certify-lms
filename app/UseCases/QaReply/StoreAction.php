@@ -26,6 +26,8 @@ final class StoreAction
     public function __invoke(QaThread $thread, User $author, array $validated): QaReply
     {
         return DB::transaction(function () use ($thread, $author, $validated) {
+            $thread = QaThread::query()->lockForUpdate()->findOrFail($thread->id);
+
             $reply = $thread->replies()->create([
                 'user_id' => $author->id,
                 'body' => $validated['body'],

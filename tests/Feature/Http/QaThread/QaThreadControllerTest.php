@@ -10,6 +10,7 @@ use App\Models\QaReply;
 use App\Models\QaThread;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Gate;
 use Tests\TestCase;
 
 /**
@@ -262,6 +263,24 @@ class QaThreadControllerTest extends TestCase
 
         $response->assertStatus(403);
         $this->assertDatabaseHas('qa_threads', ['id' => $thread->id]);
+    }
+
+    public function test_author_cannot_delete_question_when_reply_arrives_after_authorization(): void
+    {
+        $author = User::factory()->student()->inProgress()->create();
+        $thread = $this->createThread($author, Certification::factory()->published()->create());
+        $reply = null;
+
+        Gate::after(function (User $user, string $ability, ?bool $result, array $arguments) use ($thread, &$reply): void {
+            if ($ability === 'delete' && $result === true && ($arguments[0] ?? null) instanceof QaThread && $reply === null) {
+                $reply = QaReply::factory()->create(['qa_thread_id' => $thread->id]);
+            }
+        });
+
+        $this->actingAs($author)->delete(route('qa-board.destroy', $thread))->assertForbidden();
+
+        $this->assertDatabaseHas('qa_threads', ['id' => $thread->id]);
+        $this->assertDatabaseHas('qa_replies', ['id' => $reply->id]);
     }
 
     public function test_author_can_resolve_and_unresolve_question(): void

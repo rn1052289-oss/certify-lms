@@ -13,6 +13,7 @@ use App\UseCases\QaThread\DestroyAction as DestroyThreadAction;
 use App\UseCases\QaThread\IndexAction;
 use App\UseCases\QaThread\ShowAction;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 /**
@@ -49,11 +50,11 @@ class QaBoardModerationController extends Controller
         ]);
     }
 
-    public function destroy(QaThread $thread, DestroyThreadAction $action): RedirectResponse
+    public function destroy(QaThread $thread, Request $request, DestroyThreadAction $action): RedirectResponse
     {
         $this->authorize('delete', $thread);
 
-        $action($thread);
+        $action($thread, $request->user());
 
         return redirect()
             ->route('admin.qa-board.index')
