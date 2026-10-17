@@ -294,11 +294,8 @@ class MeetingControllerTest extends TestCase
         $response->assertForbidden();
     }
 
-    public function test_store_blocks_double_booking_for_same_coach_and_slot(): void
+    public function test_store_allows_rebooking_after_cancellation(): void
     {
-        // Arrange: 予約可能コンテキスト + 同コーチ・同時刻に canceled 面談を 1 件先在させる。
-        // canceled は候補抽出(予約済コーチ除外)をすり抜けるが、(coach_id, scheduled_at) UNIQUE は
-        // status を問わず効くため、並行を起こさず決定論的に二重予約の衝突を再現できる。
         $student = User::factory()->student()->inProgress()->create(['max_meetings' => 3]);
         $otherStudent = User::factory()->student()->create();
         $admin = User::factory()->admin()->create();
@@ -323,14 +320,10 @@ class MeetingControllerTest extends TestCase
                 'topic' => '相談したい',
             ]);
 
-        // Assert: 二重予約は成立せず、新規 reserved は作られない(canceled の 1 件のみが残る)
         $response->assertRedirect();
-        $response->assertSessionHas('error');
-        $this->assertSame(
-            0,
-            Meeting::query()->where('status', MeetingStatus::Reserved->value)->count(),
-            '同コーチ・同時刻の二重予約は (coach_id, scheduled_at) UNIQUE で阻止されるはず',
-        );
+        $response->assertSessionHas('success');
+        $this->assertSame(1, Meeting::query()->where('status', MeetingStatus::Reserved->value)->count());
+        $this->assertSame(1, Meeting::query()->where('status', MeetingStatus::Canceled->value)->count());
     }
 
     public function test_cancel_refunds_meeting_quota(): void
