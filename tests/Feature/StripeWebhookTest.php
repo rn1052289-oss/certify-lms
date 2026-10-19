@@ -9,7 +9,11 @@ use App\Enums\PaymentStatus;
 use App\Enums\UserStatus;
 use App\Models\MeetingQuotaTransaction;
 use App\Models\Payment;
+use App\Models\Plan;
+use App\Models\User;
 use App\Services\MeetingQuotaService;
+use App\UseCases\Plan\GraduateUserAction;
+use App\UseCases\User\WithdrawAction;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Testing\TestResponse;
@@ -119,22 +123,85 @@ class StripeWebhookTest extends TestCase
         $this->assertDatabaseCount('meeting_quota_transactions', 1);
     }
 
-    public function test_normal_payment_is_applied_after_graduation_or_soft_withdrawal_without_unlocking_access(): void
+    public function test_paid_event_after_real_withdrawal_preserves_anonymization_and_grants_snapshot_quota_only_once(): void
     {
-        foreach ([UserStatus::Graduated, UserStatus::Withdrawn] as $status) {
-            $payment = Payment::factory()->create();
-            $user = $payment->user;
-            $user->update(['status' => $status]);
-            if ($status === UserStatus::Withdrawn) {
-                $user->delete();
-            }
-            $this->sendEvent($this->event($payment))->assertOk();
-            $this->assertSame(PaymentStatus::Succeeded, $payment->fresh()->status);
-            $this->assertDatabaseHas('meeting_quota_transactions', ['related_payment_id' => $payment->id, 'amount' => 3]);
-            $this->assertSame($status, $payment->fresh()->user->status);
-            $this->actingAs($user)->get(route('meeting-quota.checkout.select'))->assertForbidden();
-        }
-        $this->assertDatabaseCount('meeting_quota_transactions', 2);
+        $payment = Payment::factory()->create();
+        $user = $payment->user;
+        $admin = User::factory()->admin()->create();
+        $before = app(MeetingQuotaService::class)->remaining($user);
+        $originalMax = $user->max_meetings;
+        $event = $this->event($payment);
+
+        app(WithdrawAction::class)($user, $admin);
+
+        $this->assertSame(UserStatus::Withdrawn, $payment->fresh()->user->status);
+        $this->assertNotNull($payment->fresh()->user->deleted_at);
+        $this->assertSame($user->id.'@deleted.invalid', $payment->fresh()->user->email);
+        $this->assertDatabaseHas('user_status_logs', [
+            'user_id' => $user->id, 'from_status' => UserStatus::InProgress->value,
+            'to_status' => UserStatus::Withdrawn->value, 'changed_by_user_id' => $admin->id,
+        ]);
+
+        $this->sendEvent($event)->assertOk();
+        $paidAt = $payment->fresh()->paid_at;
+        $this->assertNotNull($paidAt);
+        $this->travel(1)->minutes();
+        $this->sendEvent($event)->assertOk();
+
+        $this->assertSame(PaymentStatus::Succeeded, $payment->fresh()->status);
+        $this->assertTrue($paidAt->equalTo($payment->fresh()->paid_at));
+        $this->assertDatabaseCount('meeting_quota_transactions', 1);
+        $this->assertDatabaseHas('meeting_quota_transactions', [
+            'user_id' => $user->id, 'related_payment_id' => $payment->id,
+            'type' => MeetingQuotaTransactionType::Purchased->value, 'amount' => $payment->quantity,
+        ]);
+        $this->assertSame($before + $payment->quantity, app(MeetingQuotaService::class)->remaining($payment->fresh()->user));
+        $this->assertSame($originalMax, $payment->fresh()->user->max_meetings);
+        $this->assertSame(UserStatus::Withdrawn, $payment->fresh()->user->status);
+        $this->assertNotNull($payment->fresh()->user->deleted_at);
+        $this->assertSame($user->id.'@deleted.invalid', $payment->fresh()->user->email);
+        $this->actingAs($payment->fresh()->user)->get(route('meeting-quota.checkout.select'))->assertForbidden();
+    }
+
+    public function test_paid_event_after_real_graduation_preserves_status_and_grants_snapshot_quota_only_once(): void
+    {
+        $plan = Plan::factory()->published()->create();
+        $user = User::factory()->student()->withPlan($plan)->create();
+        $payment = Payment::factory()->create(['user_id' => $user->id]);
+        $before = app(MeetingQuotaService::class)->remaining($user);
+        $originalMax = $user->max_meetings;
+        $event = $this->event($payment);
+
+        app(GraduateUserAction::class)($user);
+
+        $this->assertSame(UserStatus::Graduated, $user->fresh()->status);
+        $this->assertNull($user->fresh()->deleted_at);
+        $this->assertDatabaseHas('user_status_logs', [
+            'user_id' => $user->id, 'from_status' => UserStatus::InProgress->value,
+            'to_status' => UserStatus::Graduated->value,
+        ]);
+        $this->assertDatabaseHas('user_plan_logs', [
+            'user_id' => $user->id, 'plan_id' => $plan->id, 'event_type' => 'expired',
+        ]);
+
+        $this->sendEvent($event)->assertOk();
+        $paidAt = $payment->fresh()->paid_at;
+        $this->assertNotNull($paidAt);
+        $this->travel(1)->minutes();
+        $this->sendEvent($event)->assertOk();
+
+        $this->assertSame(PaymentStatus::Succeeded, $payment->fresh()->status);
+        $this->assertTrue($paidAt->equalTo($payment->fresh()->paid_at));
+        $this->assertDatabaseCount('meeting_quota_transactions', 1);
+        $this->assertDatabaseHas('meeting_quota_transactions', [
+            'user_id' => $user->id, 'related_payment_id' => $payment->id,
+            'type' => MeetingQuotaTransactionType::Purchased->value, 'amount' => $payment->quantity,
+        ]);
+        $this->assertSame($before + $payment->quantity, app(MeetingQuotaService::class)->remaining($user->fresh()));
+        $this->assertSame($originalMax, $user->fresh()->max_meetings);
+        $this->assertSame(UserStatus::Graduated, $user->fresh()->status);
+        $this->assertNull($user->fresh()->deleted_at);
+        $this->actingAs($user->fresh())->get(route('meeting-quota.checkout.select'))->assertForbidden();
     }
 
     public function test_webhook_arriving_before_checkout_response_can_identify_payment_from_snapshot(): void
