@@ -31,7 +31,7 @@ class AiChatTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['ai-chat.enabled' => true, 'ai-chat.gemini.api_key' => 'test-key', 'ai-chat.auto_title' => false]);
+        config(['ai-chat.enabled' => true, 'ai-chat.gemini.api_key' => 'test-key', 'ai-chat.gemini.model' => 'verification-model', 'ai-chat.auto_title' => false]);
         Http::preventStrayRequests();
     }
 
@@ -203,9 +203,9 @@ class AiChatTest extends TestCase
         $url = '/ai-chat/conversations/'.$conversation->id;
         $result = $this->actingAs($student)->postJson($url.'/messages', ['content' => '質問です'])->assertOk();
         $result->assertJsonPath('assistant_message.content', '学習の回答です。')->assertJsonMissingPath('assistant_message.model')->assertJsonMissingPath('assistant_message.output_tokens')->assertJsonMissingPath('assistant_message.response_time_ms');
-        $this->assertDatabaseHas('ai_chat_messages', ['ai_chat_conversation_id' => $conversation->id, 'model' => 'gemini-2.5-flash', 'input_tokens' => 50, 'output_tokens' => 25]);
+        $this->assertDatabaseHas('ai_chat_messages', ['ai_chat_conversation_id' => $conversation->id, 'model' => 'verification-model', 'input_tokens' => 50, 'output_tokens' => 25]);
         $this->postJson($url.'/messages', ['content' => '続きの質問'])->assertOk();
-        Http::assertSent(fn ($request) => $request->header('x-goog-api-key') === ['test-key'] && ! str_contains($request->url(), 'test-key') && str_contains($request['systemInstruction']['parts'][0]['text'], '公開教材本文') && count($request['contents']) === 3 && $request['contents'][0]['parts'][0]['text'] === '質問です' && $request['contents'][1]['role'] === 'model');
+        Http::assertSent(fn ($request) => $request->header('x-goog-api-key') === ['test-key'] && str_contains($request->url(), '/models/verification-model:generateContent') && ! str_contains($request->url(), 'test-key') && str_contains($request['systemInstruction']['parts'][0]['text'], '公開教材本文') && count($request['contents']) === 3 && $request['contents'][0]['parts'][0]['text'] === '質問です' && $request['contents'][1]['role'] === 'model');
         $this->getJson($url)->assertJsonCount(4, 'messages')->assertJsonMissingPath('messages.1.model');
     }
 

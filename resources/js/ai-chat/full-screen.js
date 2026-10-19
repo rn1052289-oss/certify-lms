@@ -18,6 +18,9 @@ function initForm() {
     let list = document.querySelector('[data-message-list]');
     const scroller = document.querySelector('[data-message-scroller]');
     const titleEl = document.querySelector('[data-conversation-title]');
+    const titleInput = document.querySelector('#rename-ai-chat-form input[name="title"]');
+    let titleEdited = titleInput ? titleInput.value !== titleEl?.textContent?.trim() : false;
+    titleInput?.addEventListener('input', () => { titleEdited = true; });
 
     // 提供画面は空の会話に <ul> を出さないため、最初の送信先を用意する。
     const emptyState = !list ? scroller?.firstElementChild : null;
@@ -104,6 +107,8 @@ function initForm() {
         onTitleUpdated: ({ title }) => {
             if (! title) return;
             if (titleEl) titleEl.textContent = title;
+            // 自動命名を編集欄へ反映し、本人が書き始めた下書きは保持する。
+            if (titleInput && !titleEdited) titleInput.value = title;
             const parts = document.title.split(' | ');
             document.title = parts.length > 1 ? `${title} | ${parts[parts.length - 1]}` : title;
         },
