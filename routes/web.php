@@ -21,6 +21,7 @@ use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\LearningHourTargetController;
 use App\Http\Controllers\MeetingController;
 use App\Http\Controllers\MeetingPackController;
+use App\Http\Controllers\MeetingQuotaCheckoutController;
 use App\Http\Controllers\MeetingQuotaHistoryController;
 use App\Http\Controllers\MockExamAnswerController;
 use App\Http\Controllers\MockExamCatalogController;
@@ -50,10 +51,16 @@ use App\Http\Controllers\Settings\AvatarController;
 use App\Http\Controllers\Settings\PasswordController;
 use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\SettingsDefaultEnrollmentController;
+use App\Http\Controllers\StripeWebhookController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WeakDrillController;
 use App\Http\Controllers\WeakDrillResultController;
+use App\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Support\Facades\Route;
+
+Route::post('/webhooks/stripe', StripeWebhookController::class)
+    ->withoutMiddleware([VerifyCsrfToken::class])
+    ->name('webhooks.stripe');
 
 Route::get('/', function () {
     return auth()->check()
@@ -131,6 +138,13 @@ Route::middleware(['auth', 'role:student,coach'])
 // 受講生専用ルート(受講中ステータスのみ通過、卒業ステータスはロック)
 // ============================================================
 Route::middleware(['auth', 'role:student', 'active-learning'])->group(function () {
+    Route::get('meeting-quota/checkout', [MeetingQuotaCheckoutController::class, 'select'])
+        ->name('meeting-quota.checkout.select');
+    Route::post('meeting-quota/checkout', [MeetingQuotaCheckoutController::class, 'create'])
+        ->name('meeting-quota.checkout.create');
+    Route::get('meeting-quota/success', [MeetingQuotaCheckoutController::class, 'success'])
+        ->name('meeting-quota.success');
+
     // 資格カタログ(受講生視点の閲覧)
     Route::get('certifications', [CertificationCatalogController::class, 'index'])
         ->name('certifications.index');

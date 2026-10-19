@@ -16,6 +16,7 @@ final class ShowAction
         return $plan->load([
             'createdBy',
             'updatedBy',
+            'payments.user',
         ]);
     }
 }
