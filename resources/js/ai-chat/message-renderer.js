@@ -34,7 +34,7 @@ function getInitials(name) {
  * フル画面用のバブルを生成して messageList に追加する。
  *
  * @param {HTMLElement} container - メッセージ <ul>
- * @param {object} message - { id, role, content, status, model, response_time_ms, output_tokens, created_at }
+ * @param {object} message - { id, role, content, status, created_at }
  * @param {object} options - { viewerName }
  */
 export function renderFullScreenMessage(container, message, options = {}) {
@@ -84,10 +84,6 @@ export function renderFullScreenMessage(container, message, options = {}) {
 
     const segments = [];
     segments.push(formatTime(message.created_at));
-    if (!isMe && message.status === 'completed') {
-        if (message.response_time_ms) segments.push(`${(message.response_time_ms / 1000).toFixed(1)} s`);
-        if (message.output_tokens) segments.push(`${message.output_tokens} tokens`);
-    }
     if (isError) segments.push('エラー');
     timeEl.textContent = segments.filter(Boolean).join(' · ');
 

@@ -138,8 +138,32 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 
 ## 環境変数
 
-`.env.example` をコピーするだけで、すべての機能がローカルで動作します（メールは Mailpit に配信されます）。
+`.env.example` をコピーすると、外部 API キーが不要な機能はローカルで動作します（メールは Mailpit に配信されます）。
 
 - `PUSHER_*` — チャットのリアルタイム配信に使用します。有効にする場合は Pusher のキーを取得して設定し、`BROADCAST_DRIVER=pusher` に変更してください。未設定（既定の `BROADCAST_DRIVER=log`）でもメッセージの送受信自体は動作し、相手画面へのリアルタイム反映のみ行われません
 
 新しい環境変数やセットアップ手順を追加した場合は、`.env.example` と本 README に追記し、チームの誰でも環境を再現できる状態を保ってください。
+
+### AI 相談（S-A-02）
+
+- `AI_CHAT_ENABLED=false` が初期値です。Gemini の利用を確認した環境で `true` にすると、学習中の受講生が利用できます。
+- `GEMINI_API_KEY` に Gemini API キー、`GEMINI_MODEL` に利用モデルを設定します。キーは Git に保存しないでください。API キー未設定時の送信は、利用できない旨を案内します。
+- `AI_CHAT_AUTO_TITLE=true` のとき、初回の正常回答後に一度だけ自動命名します。本人が編集したタイトルは上書きしません。`false` で自動命名を無効にできます。
+- `AI_CHAT_SYSTEM_PROMPT` で学習相談の基本指示を変更できます。管理画面・DB への保存はありません。
+- 送信は受講生ごとに日本時間の日次20回までです。AI 側の失敗もカウントし、会話削除では回数を戻しません。本文は2000文字、タイトルは100文字までです。
+- 本人の受講資格と公開中の教材、および直近20メッセージ以内を同期 `generateContent` に送ります。履歴の先頭がAI回答だけになる場合は、その回答を省きます。トークンによる独自の切り詰め・ストリーミング・自動再送は行いません。
+- モデル・トークン数・応答時間はDBと `storage/logs/ai-chat-*.log` の内部記録に残します。キー・質問・教材本文・回答本文を運用ログへ記録しません。
+
+検証は実APIを呼び出さないテストで実施できます。
+
+```bash
+./vendor/bin/sail artisan test tests/Feature/Http/AiChat/AiChatTest.php
+```
+
+画面確認・撮影前には、通常の開発データ（固定の `student@certify-lms.test`、受講登録、公開教材）を用意した上で、検証用Seederを実行してください。全般相談・教材相談・エラー履歴が作られ、再実行で同じ履歴を増殖させません。Seeder自体は外部APIを呼びません。
+
+```bash
+./vendor/bin/sail artisan db:seed --class=AiChatVerificationSeeder
+```
+
+画面から新しい質問を実際に送信するとGemini APIを呼び出します。画面上の履歴・エラー表示の確認はSeederのデータだけでも可能です。

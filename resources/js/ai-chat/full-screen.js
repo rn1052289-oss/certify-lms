@@ -15,10 +15,22 @@ function initForm() {
 
     const textarea = form.querySelector('[data-ai-chat-textarea]');
     const submit = form.querySelector('[data-ai-chat-submit]');
-    const list = document.querySelector('[data-message-list]');
+    let list = document.querySelector('[data-message-list]');
     const scroller = document.querySelector('[data-message-scroller]');
     const titleEl = document.querySelector('[data-conversation-title]');
 
+    // 提供画面は空の会話に <ul> を出さないため、最初の送信先を用意する。
+    const emptyState = !list ? scroller?.firstElementChild : null;
+    if (!list && scroller) {
+        list = document.createElement('ul');
+        list.dataset.messageList = '';
+        list.setAttribute('role', 'log');
+        list.setAttribute('aria-live', 'polite');
+        list.setAttribute('aria-atomic', 'false');
+        list.setAttribute('aria-label', 'AI 相談メッセージ');
+        list.className = 'flex flex-col gap-4 max-w-[760px] mx-auto w-full';
+        scroller.appendChild(list);
+    }
     if (!list) return;
 
     const viewerName = document.querySelector('meta[name="auth-user-name"]')?.content
@@ -114,6 +126,7 @@ function initForm() {
         if (!content) return;
 
         submit.disabled = true;
+        emptyState?.remove();
         textarea.value = '';
         textarea.style.height = '';
         autoResize();
@@ -131,6 +144,12 @@ function initForm() {
 
         try {
             await client.sendSync(content);
+        } catch (error) {
+            clearTyping();
+            renderFullScreenMessage(list, {
+                id: 'tmp-error-' + Date.now(), role: 'assistant', status: 'error',
+                content: '送信に失敗しました。時間をおいて再度お試しください。', created_at: new Date().toISOString(),
+            }, { viewerName });
         } finally {
             submit.disabled = false;
             clearTyping();
@@ -142,6 +161,7 @@ function initForm() {
 }
 
 function describeError(err) {
+    if (err.status === 503) return 'AI 相談は現在利用できません。管理者にお問い合わせください。';
     if (err.type === 'rate-limit') return '本日の利用上限に達しました。明日 0:00 以降に再度ご利用ください。';
     if (err.type === 'validation') return '入力内容を確認してください (1-2000 文字)。';
     if (err.type === 'llm') {

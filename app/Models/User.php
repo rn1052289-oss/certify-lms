@@ -119,6 +119,12 @@ class User extends Authenticatable
             ->orderBy('created_at');
     }
 
+    /** @return HasMany<AiChatConversation, $this> */
+    public function aiChatConversations(): HasMany
+    {
+        return $this->hasMany(AiChatConversation::class);
+    }
+
     /**
      * 受講生が「いつもこの資格を見る」と明示設定したデフォルト資格(受講登録)。
      * サイドバー / 教材 / 模試 / 面談予約画面の自動解決元になる。

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\AiChatConversationController;
+use App\Http\Controllers\AiChatMessageController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\Auth\OnboardingController;
 use App\Http\Controllers\BrowseController;
@@ -53,6 +55,7 @@ use App\Http\Controllers\Settings\SettingsDefaultEnrollmentController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WeakDrillController;
 use App\Http\Controllers\WeakDrillResultController;
+use App\Http\Middleware\EnsureAiChatEnabled;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -631,3 +634,14 @@ if (app()->environment('local')) {
         return view('_dev.components');
     })->name('_dev.components');
 }
+
+// AI 相談 — 機能 ON・学習中の受講生のみ。個別会話は Policy で本人に限定する。
+Route::middleware(['auth', 'role:student', 'active-learning', EnsureAiChatEnabled::class])
+    ->prefix('ai-chat')->name('ai-chat.')->group(function () {
+        Route::get('/', [AiChatConversationController::class, 'index'])->name('index');
+        Route::post('conversations', [AiChatConversationController::class, 'store'])->name('conversations.store');
+        Route::get('conversations/{conversation}', [AiChatConversationController::class, 'show'])->name('conversations.show');
+        Route::patch('conversations/{conversation}', [AiChatConversationController::class, 'update'])->name('conversations.update');
+        Route::delete('conversations/{conversation}', [AiChatConversationController::class, 'destroy'])->name('conversations.destroy');
+        Route::post('conversations/{conversation}/messages', [AiChatMessageController::class, 'store'])->name('conversations.messages.store');
+    });
