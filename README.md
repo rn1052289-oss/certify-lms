@@ -143,18 +143,3 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 - `PUSHER_*` — チャットのリアルタイム配信に使用します。有効にする場合は Pusher のキーを取得して設定し、`BROADCAST_DRIVER=pusher` に変更してください。未設定（既定の `BROADCAST_DRIVER=log`）でもメッセージの送受信自体は動作し、相手画面へのリアルタイム反映のみ行われません
 
 新しい環境変数やセットアップ手順を追加した場合は、`.env.example` と本 README に追記し、チームの誰でも環境を再現できる状態を保ってください。
-
-
-### Google Calendar 連携（S-A-01）
-
-コーチ本人が面談設定から任意で primary カレンダーを接続します。Google Cloud の OAuth クライアントを作り、Calendar API を有効化し、`.env.example` の `GOOGLE_CALENDAR_CLIENT_ID` / `GOOGLE_CALENDAR_CLIENT_SECRET` / `GOOGLE_CALENDAR_REDIRECT_URI` を設定してください。承認済みリダイレクト URI は `/settings/google-calendar/callback` まで完全一致で登録します。ローカル検証はテスト用 Google アカウントを使用します。
-
-空き判定は FreeBusy の [開始, 終了) の重なりを除外し、予約 POST の割当にも同じ判定を適用します。確定後に固定の `meeting_url_snapshot` を予定へ記載し、取消後に本システムが作った予定だけを削除します。Google の障害時は LMS の予約・取消を確定したまま警告を表示します。外部 API は DB トランザクションの外で呼び出します。
-
-解除はローカルトークンを削除し、作成済みの Google 予定は残します。再連携は新しい接続IDとなり、過去の接続で作った予定は自動同期しません。過去予約の遡及同期・Meet生成・双方向同期・リトライキューは対象外です。外部で成功した直後の切断等により同期が未完了となる場合があります。警告時は Google と LMS の予定を手動で確認してください。
-
-チケット指定により今回のトークン保存は平文です。**本番運用では暗号化保存を推奨**します。トークンは JSON やログに出しません。実トークンを検証用Seederに入れたり、コミットしたりしないでください。
-
-画面確認前に既存のデモデータを投入したローカルDBで `php artisan db:seed --class=GoogleCalendarVerificationSeeder` を実行します。`coach@certify-lms.test` が接続表示、`coach2@certify-lms.test` が未接続表示です。ダミートークンなので Google 予定の取得・登録成功の証跡には使えません。実接続は別の検証用コーチで OAuth を完了し、Google に 30 分の予定を入れた時間の非表示、未連携コーチの候補維持、予約時の固定 URL 入り予定、取消時の削除、接続解除後に既存予定が残ることを確認してください。
-
-自動テストは `APP_ENV=testing php vendor/bin/phpunit --no-coverage tests/Feature/GoogleCalendar tests/Unit/Services/MeetingAvailabilityServiceTest.php tests/Feature/Http/Meeting/MeetingControllerTest.php` で実行します。他の testing DB テストと同時に実行しないでください。OAuth 設定・実アカウントでの接続確認は自動テストのモック成功とは区別します。
