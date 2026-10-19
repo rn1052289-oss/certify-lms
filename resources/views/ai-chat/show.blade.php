@@ -21,7 +21,6 @@
             $history30days[] = $h;
         }
     }
-    $model = (string) config('ai-chat.gemini.model', 'gemini-2.5-flash');
 @endphp
 
 @section('content')
@@ -98,7 +97,6 @@
                     </div>
                     <div class="flex items-center gap-2 mt-1 flex-wrap">
                         @include('ai-chat._partials.context-badges')
-                        <span class="text-[10px] text-ink-500 font-mono">{{ $model }}</span>
                     </div>
                 </div>
 

@@ -167,3 +167,14 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 ```
 
 画面から新しい質問を実際に送信するとGemini APIを呼び出します。画面上の履歴・エラー表示の確認はSeederのデータだけでも可能です。
+
+
+#### 提供画面からの変更（S-A-02、PM確認済み）
+
+要件に合わせ、画面構成・デザインを保ったまま、次の表示だけを変更しています。
+
+- `ai-chat/_partials/message-bubble.blade.php`：応答時間・トークン数は運用用の情報のため、回答欄へ表示しません。
+- `ai-chat/show.blade.php` / `components/ai-chat/floating-widget.blade.php`：受講生向けの全画面・小窓からAIモデル名を非表示にしています。
+- `layouts/_partials/sidebar-student.blade.php`：`AI_CHAT_ENABLED=false` のとき、利用できない「AI 相談」のナビゲーションを表示しません。
+
+ファイル名はいずれも `resources/views/` 以下です。モデル・トークン数・応答時間のDB/運用ログへの内部記録は維持します。

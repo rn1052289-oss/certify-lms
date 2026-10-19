@@ -11,8 +11,6 @@
 ])
 
 @php
-    $model = (string) config('ai-chat.gemini.model', 'gemini-2.5-flash');
-
     if ($sectionId && $sectionTitle) {
         $ctxLabel = '📚 '.$sectionTitle;
         $ctxClass = 'bg-secondary-50 border-secondary-100 text-secondary-800';
@@ -102,7 +100,6 @@
             <span data-ai-chat-context class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white border {{ $ctxClass }} font-semibold">
                 {{ $ctxLabel }}
             </span>
-            <span class="ml-auto text-[10px] text-ink-500 font-mono">{{ $model }}</span>
         </div>
 
         {{-- Messages --}}

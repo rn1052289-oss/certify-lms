@@ -72,12 +72,6 @@
                 {{ $message->updated_at?->format('H:i') }} · エラー
             @elseif (! $isMe && $message->status === \App\Enums\AiChatMessageStatus::Completed)
                 {{ $message->created_at?->format('H:i') }}
-                @if ($message->response_time_ms)
-                    · {{ number_format($message->response_time_ms / 1000, 1) }} s
-                @endif
-                @if ($message->output_tokens)
-                    · {{ number_format($message->output_tokens) }} tokens
-                @endif
             @else
                 {{ $message->created_at?->format('H:i') }}
             @endif

@@ -20,6 +20,7 @@ use Database\Seeders\AiChatVerificationSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -70,6 +71,51 @@ class AiChatTest extends TestCase
         $this->get('/ai-chat/conversations/'.$id)->assertOk()->assertViewIs('ai-chat.show');
         $this->deleteJson('/ai-chat/conversations/'.$id)->assertNoContent();
         $this->assertDatabaseMissing('ai_chat_conversations', ['id' => $id]);
+        Http::assertNothingSent();
+    }
+
+    public function test_full_screen_and_widget_hide_operational_metadata_but_keep_answer_and_internal_values(): void
+    {
+        config(['ai-chat.gemini.model' => 'internal-model-display-check']);
+        $conversation = $this->conversation();
+        $message = $conversation->messages()->create([
+            'role' => AiChatMessageRole::Assistant,
+            'status' => AiChatMessageStatus::Completed,
+            'content' => '表示する学習の回答',
+            'model' => 'internal-model-display-check',
+            'response_time_ms' => 12345,
+            'input_tokens' => 123456,
+            'output_tokens' => 987654,
+        ]);
+        $this->actingAs($conversation->user)->get('/ai-chat/conversations/'.$conversation->id)
+            ->assertOk()
+            ->assertSee('表示する学習の回答')
+            ->assertDontSee('internal-model-display-check')
+            ->assertDontSee('987,654 tokens')
+            ->assertDontSee('12.3 s');
+
+        $widget = Blade::render('<x-ai-chat.floating-widget />');
+        $this->assertStringNotContainsString('internal-model-display-check', $widget);
+        $this->assertStringContainsString('全般相談', $widget);
+        $this->assertDatabaseHas('ai_chat_messages', [
+            'id' => $message->id,
+            'model' => 'internal-model-display-check',
+            'response_time_ms' => 12345,
+            'input_tokens' => 123456,
+            'output_tokens' => 987654,
+        ]);
+        Http::assertNothingSent();
+    }
+
+    public function test_feature_flag_hides_only_ai_navigation_when_disabled(): void
+    {
+        $student = User::factory()->student()->create();
+        $this->actingAs($student)->get('/settings/profile')->assertOk()
+            ->assertSee('href="'.route('ai-chat.index').'"', false);
+        config(['ai-chat.enabled' => false]);
+        $this->get('/settings/profile')->assertOk()
+            ->assertDontSee('href="'.route('ai-chat.index').'"', false)
+            ->assertSee('href="'.route('chat.index').'"', false);
         Http::assertNothingSent();
     }
 
