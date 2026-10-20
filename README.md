@@ -138,8 +138,24 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 
 ## 環境変数
 
-`.env.example` をコピーするだけで、すべての機能がローカルで動作します（メールは Mailpit に配信されます）。
+`.env.example` をコピーすると、外部サービス連携を除く基本機能がローカルで動作します（メールは Mailpit に配信されます）。
 
 - `PUSHER_*` — チャットのリアルタイム配信に使用します。有効にする場合は Pusher のキーを取得して設定し、`BROADCAST_DRIVER=pusher` に変更してください。未設定（既定の `BROADCAST_DRIVER=log`）でもメッセージの送受信自体は動作し、相手画面へのリアルタイム反映のみ行われません
 
 新しい環境変数やセットアップ手順を追加した場合は、`.env.example` と本 README に追記し、チームの誰でも環境を再現できる状態を保ってください。
+
+### AI 相談（S-A-02）
+
+学習中の受講生本人のみ利用できます。Gemini の API キーを取得し、利用する環境の `.env` に以下を設定してください。キーはコミットしないでください。
+
+- `AI_CHAT_ENABLED` — 既定は `false`（無効）。`true` にすると AI 相談の画面・ナビ・小窓を利用できます
+- `GEMINI_API_KEY` — Gemini の API キー。未設定の場合は送信できない旨を案内します
+- `GEMINI_MODEL` — 既定は `gemini-3.5-flash-lite`。対象プロジェクトで利用できるモデルを指定してください
+- `AI_CHAT_AUTO_TITLE` — 既定は `true`。初回の正常な AI 回答が完了したときに1回だけ自動命名します。本人が手動編集したタイトルは上書きしません
+- `AI_CHAT_SYSTEM_PROMPT` — 任意。未設定なら `config/ai-chat.php` の日本語の案内文を使います
+
+送信は受講生1人につき1日20回までです。AI 応答に失敗した送信も回数へ含め、会話を削除しても利用回数は戻りません。本文は2000文字、タイトルは100文字までです。
+
+PM確認済みの4つの Blade は、既存の画面構成・デザインを保って表示だけ変更しています。`ai-chat/_partials/message-bubble.blade.php` の応答時間・トークン数、`ai-chat/show.blade.php` と `components/ai-chat/floating-widget.blade.php` のモデル名は運用用の情報のため非表示にし、DB・運用ログへの記録は維持します。`layouts/_partials/sidebar-student.blade.php` は機能OFF時の AI 相談ナビを非表示にします。ファイルはいずれも `resources/views/` 以下です。
+
+設定キャッシュを使用している場合は、変更後に `sail artisan config:clear` を実行してください。画面から新しい質問を送ると実際の Gemini API を呼び出します。
