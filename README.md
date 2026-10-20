@@ -138,8 +138,28 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 
 ## 環境変数
 
-`.env.example` をコピーするだけで、すべての機能がローカルで動作します（メールは Mailpit に配信されます）。
+`.env.example` をコピーすると、外部サービス連携を除く基本機能がローカルで動作します（メールは Mailpit に配信されます）。
 
 - `PUSHER_*` — チャットのリアルタイム配信に使用します。有効にする場合は Pusher のキーを取得して設定し、`BROADCAST_DRIVER=pusher` に変更してください。未設定（既定の `BROADCAST_DRIVER=log`）でもメッセージの送受信自体は動作し、相手画面へのリアルタイム反映のみ行われません
+
+### Stripe（追加面談購入）
+
+- `STRIPE_SECRET` — Stripe の検証用シークレットキーを設定します。未設定の場合は購入画面への送信を受け付けません
+- `STRIPE_WEBHOOK_SECRET` — 決済通知の署名検証に使用します。ローカルでは下記の `stripe listen` が表示する値を設定します。Dashboard に登録した通知先の値とは別です
+
+Stripe のサンドボックスと、本プロジェクト専用の Stripe CLI 設定を使用してください。
+
+```bash
+stripe login --project-name=certify-lms-verification
+stripe listen --project-name=certify-lms-verification \
+    --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired \
+    --forward-to http://localhost:8000/webhooks/stripe
+```
+
+転送先のポートはアプリの起動先に合わせます。`APP_URL` もブラウザーから開ける URL にそろえてください。設定後は `sail artisan config:clear` を実行し、起動中のアプリを再起動します。キーや署名検証用の値は Git・画面撮影・共有ログへ含めないでください。
+
+学習中の受講生は公開中の面談パックを購入できます。金額・回数は購入開始時に保存し、署名検証済みの正常完了通知を受け取った時に回数を加算します。成功画面の表示・再読込では加算せず、同じ通知を受け取っても二重加算しません。購入開始後に卒業・退会しても正常完了分は購入時の回数を加算し、利用できるかは既存の状態・認可に従います。
+
+`PaymentSeeder` は実際の Stripe 通信を行わず、完了・保留・失敗の購入履歴を用意します。実接続の確認には Stripe 側の設定とテスト決済が別途必要です。カード番号を LMS に保存しません。実決済・実通知の検証は現在未完了です。
 
 新しい環境変数やセットアップ手順を追加した場合は、`.env.example` と本 README に追記し、チームの誰でも環境を再現できる状態を保ってください。
