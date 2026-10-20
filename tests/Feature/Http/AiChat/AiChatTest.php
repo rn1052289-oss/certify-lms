@@ -21,6 +21,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -404,6 +405,150 @@ class AiChatTest extends TestCase
         Http::fake(['*' => Http::response([], 503)]);
         $this->actingAs($student)->post('/ai-chat/conversations', ['source' => 'full-screen', 'message' => '最初の質問'])->assertRedirect()->assertSessionHas('error');
         $this->assertDatabaseHas('ai_chat_messages', ['role' => 'user', 'content' => '最初の質問']);
+        $this->assertDatabaseHas('ai_chat_messages', ['role' => 'assistant', 'status' => 'error']);
+        $this->assertDatabaseCount('ai_chat_conversations', 1);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 1]);
+    }
+
+    public function test_initial_question_with_missing_key_returns_input_without_empty_conversation_and_can_retry(): void
+    {
+        $student = User::factory()->student()->create();
+        config(['ai-chat.gemini.api_key' => '']);
+        $data = ['source' => 'full-screen', 'message' => '消さずに残す最初の質問'];
+        $this->actingAs($student)->from('/ai-chat')->post('/ai-chat/conversations', $data)
+            ->assertRedirect('/ai-chat')->assertSessionHasErrors('message')
+            ->assertSessionHasInput('message', $data['message'])->assertSessionHas('error');
+        $this->assertDatabaseCount('ai_chat_conversations', 0);
+        $this->assertDatabaseCount('ai_chat_messages', 0);
+        $this->assertDatabaseCount('ai_chat_daily_usages', 0);
+        $this->get('/ai-chat')->assertOk()->assertSee($data['message']);
+        Http::assertNothingSent();
+
+        config(['ai-chat.gemini.api_key' => 'test-key']);
+        Http::fake(['*' => Http::response($this->response())]);
+        $this->post('/ai-chat/conversations', $data)->assertRedirect();
+        $this->assertDatabaseCount('ai_chat_conversations', 1);
+        $this->assertDatabaseHas('ai_chat_messages', ['role' => 'user', 'content' => $data['message']]);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 1]);
+    }
+
+    public function test_initial_question_at_daily_limit_returns_input_without_empty_conversation(): void
+    {
+        $student = User::factory()->student()->create();
+        DB::table('ai_chat_daily_usages')->insert(['user_id' => $student->id, 'usage_date' => now()->toDateString(), 'attempts' => 20]);
+        $this->actingAs($student)->from('/ai-chat')->post('/ai-chat/conversations', ['source' => 'full-screen', 'message' => '上限後の質問'])
+            ->assertRedirect('/ai-chat')->assertSessionHasErrors('message')->assertSessionHasInput('message', '上限後の質問');
+        $this->assertDatabaseCount('ai_chat_conversations', 0);
+        $this->assertDatabaseCount('ai_chat_messages', 0);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 20]);
+        Http::assertNothingSent();
+    }
+
+    public function test_initial_json_question_preserves_rejection_status_without_empty_conversation(): void
+    {
+        $student = User::factory()->student()->create();
+        $this->actingAs($student);
+        config(['ai-chat.gemini.api_key' => '']);
+        $this->postJson('/ai-chat/conversations', ['message' => 'キー未設定'])->assertStatus(503);
+        config(['ai-chat.gemini.api_key' => 'test-key']);
+        DB::table('ai_chat_daily_usages')->insert(['user_id' => $student->id, 'usage_date' => now()->toDateString(), 'attempts' => 20]);
+        $this->postJson('/ai-chat/conversations', ['message' => '上限後'])->assertTooManyRequests();
+        $this->assertDatabaseCount('ai_chat_conversations', 0);
+        $this->assertDatabaseCount('ai_chat_messages', 0);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 20]);
+        Http::assertNothingSent();
+    }
+
+    public function test_rejected_initial_question_preserves_reused_section_conversation_and_history(): void
+    {
+        $student = User::factory()->student()->create();
+        [$enrollment, $section] = $this->sectionFor($student);
+        $conversation = $this->conversation($student);
+        $conversation->update(['section_id' => $section->id, 'enrollment_id' => $enrollment->id, 'title' => '残す教材相談']);
+        $message = $conversation->messages()->create(['role' => AiChatMessageRole::User, 'status' => AiChatMessageStatus::Completed, 'content' => '残す過去の質問']);
+        DB::table('ai_chat_daily_usages')->insert(['user_id' => $student->id, 'usage_date' => now()->toDateString(), 'attempts' => 20]);
+        $this->actingAs($student)->from('/ai-chat/conversations/'.$conversation->id)
+            ->post('/ai-chat/conversations', ['message' => '上限後の教材質問', 'section_id' => $section->id])
+            ->assertRedirect('/ai-chat/conversations/'.$conversation->id)->assertSessionHasInput('message', '上限後の教材質問');
+        $this->assertDatabaseCount('ai_chat_conversations', 1);
+        $this->assertDatabaseCount('ai_chat_messages', 1);
+        $this->assertDatabaseHas('ai_chat_conversations', ['id' => $conversation->id, 'title' => '残す教材相談']);
+        $this->assertDatabaseHas('ai_chat_messages', ['id' => $message->id, 'content' => '残す過去の質問']);
+        Http::assertNothingSent();
+    }
+
+    public function test_initial_question_commits_before_answer_and_title_api_calls(): void
+    {
+        config(['ai-chat.auto_title' => true]);
+        $student = User::factory()->student()->create();
+        $transactionLevel = DB::transactionLevel();
+        $calls = 0;
+        Http::fake(function () use ($transactionLevel, &$calls) {
+            $calls++;
+            $this->assertSame($transactionLevel, DB::transactionLevel());
+            $this->assertDatabaseCount('ai_chat_conversations', 1);
+            $this->assertDatabaseHas('ai_chat_messages', ['role' => 'user', 'content' => '最初の質問']);
+
+            return Http::response($this->response($calls === 1 ? '最初の回答' : '生成されたタイトル'));
+        });
+        $this->actingAs($student)->postJson('/ai-chat/conversations', ['message' => '最初の質問'])
+            ->assertCreated()->assertJsonPath('conversation.title', '生成されたタイトル');
+        $this->assertSame(2, $calls);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 1]);
+    }
+
+    public function test_widget_initial_question_is_saved_once_and_returns_both_messages(): void
+    {
+        $student = User::factory()->student()->create();
+        Http::fake(['*' => Http::response($this->response('小窓の最初の回答'))]);
+        $response = $this->actingAs($student)->postJson('/ai-chat/conversations', ['source' => 'widget', 'message' => '小窓の最初の質問'])
+            ->assertCreated()->assertJsonPath('user_message.content', '小窓の最初の質問')
+            ->assertJsonPath('assistant_message.content', '小窓の最初の回答')->assertJsonPath('assistant_message.status', 'completed');
+        $this->assertNotNull($response->json('conversation.id'));
+        $this->assertDatabaseCount('ai_chat_conversations', 1);
+        $this->assertDatabaseCount('ai_chat_messages', 2);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 1]);
+        Http::assertSentCount(1);
+    }
+
+    public function test_widget_initial_rejection_does_not_leave_empty_conversation(): void
+    {
+        foreach ([503, 429] as $status) {
+            $student = User::factory()->student()->create();
+            config(['ai-chat.gemini.api_key' => $status === 503 ? '' : 'test-key']);
+            if ($status === 429) {
+                DB::table('ai_chat_daily_usages')->insert(['user_id' => $student->id, 'usage_date' => now()->toDateString(), 'attempts' => 20]);
+            }
+            $this->actingAs($student)->postJson('/ai-chat/conversations', ['source' => 'widget', 'message' => '拒否された小窓の質問'])->assertStatus($status);
+            $this->assertDatabaseCount('ai_chat_conversations', 0);
+            $this->assertDatabaseCount('ai_chat_messages', 0);
+            if ($status === 429) {
+                $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 20]);
+            } else {
+                $this->assertDatabaseCount('ai_chat_daily_usages', 0);
+            }
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_widget_initial_api_failure_returns_saved_conversation_and_can_retry_without_new_conversation(): void
+    {
+        $student = User::factory()->student()->create();
+        Http::fakeSequence()->push([], 503)->push($this->response('小窓の再質問への回答'));
+        $response = $this->actingAs($student)->postJson('/ai-chat/conversations', ['source' => 'widget', 'message' => '失敗しても残す小窓の質問'])
+            ->assertStatus(502)->assertJsonPath('assistant_message.status', 'error')->assertJsonPath('upstream_status', 503)
+            ->assertJsonPath('user_message.content', '失敗しても残す小窓の質問');
+        $id = $response->json('conversation.id');
+        $this->assertNotNull($id);
+        $this->assertDatabaseCount('ai_chat_conversations', 1);
+        $this->assertDatabaseHas('ai_chat_messages', ['ai_chat_conversation_id' => $id, 'role' => 'assistant', 'status' => 'error']);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 1]);
+        $this->postJson('/ai-chat/conversations/'.$id.'/messages', ['content' => '失敗しても残す小窓の質問'])
+            ->assertOk()->assertJsonPath('conversation.id', $id)->assertJsonPath('assistant_message.content', '小窓の再質問への回答');
+        $this->assertDatabaseCount('ai_chat_conversations', 1);
+        $this->assertDatabaseCount('ai_chat_messages', 4);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 2]);
+        Http::assertSentCount(2);
     }
 
     public function test_pending_response_does_not_accept_duplicate_send_or_consume_quota(): void

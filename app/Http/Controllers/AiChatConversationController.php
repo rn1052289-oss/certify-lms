@@ -8,12 +8,13 @@ use App\Enums\AiChatMessageStatus;
 use App\Http\Requests\AiChat\StoreConversationRequest;
 use App\Http\Requests\AiChat\UpdateConversationRequest;
 use App\Models\AiChatConversation;
-use App\UseCases\AiChat\SendMessageAction;
+use App\Services\AiChatContextService;
 use App\UseCases\AiChat\StoreConversationAction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class AiChatConversationController extends Controller
 {
@@ -27,15 +28,31 @@ class AiChatConversationController extends Controller
         return view('ai-chat.empty-state');
     }
 
-    public function store(StoreConversationRequest $request, StoreConversationAction $action, SendMessageAction $send): JsonResponse|RedirectResponse
+    public function store(StoreConversationRequest $request, StoreConversationAction $action): JsonResponse|RedirectResponse
     {
         $data = $request->validated();
-        $conversation = $action($request->user(), $data);
         if (($data['message'] ?? '') !== '') {
-            $result = $send($request->user(), $conversation, $data['message']);
+            try {
+                $result = $action->withMessage($request->user(), $data);
+            } catch (HttpExceptionInterface $exception) {
+                if ($request->expectsJson() || ! in_array($exception->getStatusCode(), [429, 503], true)) {
+                    throw $exception;
+                }
+
+                return back()->withInput($request->only('message', 'source', 'section_id', 'enrollment_id'))
+                    ->withErrors(['message' => $exception->getMessage()])->with('error', $exception->getMessage());
+            }
+            $conversation = $result['conversation'];
+            if ($request->expectsJson()) {
+                $status = $result['assistant_message']->status === AiChatMessageStatus::Error ? 502 : ($conversation->wasRecentlyCreated ? 201 : 200);
+
+                return response()->json($result, $status);
+            }
             if ($result['assistant_message']->status === AiChatMessageStatus::Error) {
                 return redirect()->route('ai-chat.conversations.show', $conversation)->with('error', 'AI が応答できませんでした。質問は履歴に保存されています。');
             }
+        } else {
+            $conversation = $action($request->user(), $data);
         }
         if ($request->expectsJson()) {
             return response()->json(['conversation' => $conversation->refresh()], $conversation->wasRecentlyCreated ? 201 : 200);
@@ -44,12 +61,19 @@ class AiChatConversationController extends Controller
         return redirect()->route('ai-chat.conversations.show', $conversation);
     }
 
-    public function show(Request $request, AiChatConversation $conversation): JsonResponse|View
+    public function show(Request $request, AiChatConversation $conversation, AiChatContextService $context): JsonResponse|View
     {
         $this->authorize('view', $conversation);
         $conversation->load(['messages', 'section', 'enrollment.certification']);
         if ($request->expectsJson()) {
-            return response()->json(['conversation' => $conversation, 'messages' => $conversation->messages]);
+            $data = ['conversation' => $conversation, 'messages' => $conversation->messages];
+            if ($request->query('source') === 'widget') {
+                $validated = $request->validate(['section_id' => ['nullable', 'ulid']]);
+                $resolved = $context->resolve($request->user(), $validated['section_id'] ?? null, null);
+                $data['widget_context'] = ['enrollment_id' => $resolved['enrollment']?->id, 'section_id' => $resolved['section']?->id];
+            }
+
+            return response()->json($data);
         }
 
         return view('ai-chat.show', compact('conversation'));

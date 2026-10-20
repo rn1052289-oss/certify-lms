@@ -26,6 +26,12 @@ class SendMessageAction
     /** @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, conversation: AiChatConversation, upstream_status: ?int} */
     public function __invoke(User $user, AiChatConversation $conversation, string $content): array
     {
+        return $this->complete($conversation, $this->prepare($user, $conversation, $content));
+    }
+
+    /** @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, system_prompt: string} */
+    public function prepare(User $user, AiChatConversation $conversation, string $content): array
+    {
         abort_if(trim((string) config('ai-chat.gemini.api_key')) === '', 503, 'AI 相談は現在利用できません。API キーが設定されていません。');
         $systemPrompt = $this->context->prompt($user, $conversation);
         [$userMessage, $assistantMessage] = DB::transaction(function () use ($user, $conversation, $content): array {
@@ -49,6 +55,17 @@ class SendMessageAction
             return [$userMessage, $assistantMessage];
         });
 
+        return ['user_message' => $userMessage, 'assistant_message' => $assistantMessage, 'system_prompt' => $systemPrompt];
+    }
+
+    /**
+     * @param array{user_message: AiChatMessage, assistant_message: AiChatMessage, system_prompt: string} $prepared
+     *
+     * @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, conversation: AiChatConversation, upstream_status: ?int}
+     */
+    public function complete(AiChatConversation $conversation, array $prepared): array
+    {
+        ['user_message' => $userMessage, 'assistant_message' => $assistantMessage, 'system_prompt' => $systemPrompt] = $prepared;
         $upstreamStatus = null;
         $started = hrtime(true);
         try {
@@ -75,7 +92,7 @@ class SendMessageAction
                 return true;
             });
             if ($generateTitle) {
-                $this->generateTitle($conversation, $content, $result['content']);
+                $this->generateTitle($conversation, $userMessage->content, $result['content']);
             }
         } catch (Throwable $exception) {
             $upstreamStatus = $exception instanceof GeminiException ? $exception->upstreamStatus : null;
