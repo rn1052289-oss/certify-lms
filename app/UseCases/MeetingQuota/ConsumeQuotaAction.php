@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\DB;
  * 紐付け参照できるようにする。面談予約 Action からは同一 DB トランザクション内で呼ばれる前提だが、
  * 自身も `DB::transaction()` でラップして同一受講生に対する同時消費を直列化する(集計値ベースの
  * 残数チェックと INSERT の間に発生しうる二重消費を防ぐ)。
+ * ただし外側のトランザクションでロック前に通常の読み取りを行うと、MySQL の REPEATABLE READ では
+ * 残数集計がその時点のスナップショットを読むため、呼出側で先に受講生の行をロックすること(B-A-04)。
  */
 final class ConsumeQuotaAction
 {
