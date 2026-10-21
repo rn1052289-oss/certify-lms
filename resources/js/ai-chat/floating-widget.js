@@ -183,7 +183,7 @@ export function initAiChatWidget() {
      * sessionStorage に conversation_id が残っている時、その会話の過去メッセージを fetch して
      * Widget の messages エリアに復元する。サイドバー (フル画面) と Widget の表示を一貫させるため。
      */
-    async function loadConversationHistory(convId, version) {
+    async function loadConversationHistory(convId, version, replace = false) {
         try {
             const query = new URLSearchParams({ source: 'widget' });
             if (sectionId) query.set('section_id', sectionId);
@@ -197,7 +197,7 @@ export function initAiChatWidget() {
             if (version !== conversationVersion || currentConversationId !== convId) return;
             if (!res.ok) {
                 // 削除済・他者会話などは引き継がず、次回送信で新規会話を作る。
-                clearConversation();
+                if (!replace || res.status === 403 || res.status === 404) clearConversation();
 
                 return;
             }
@@ -216,6 +216,7 @@ export function initAiChatWidget() {
             const messages = Array.isArray(data.messages) ? data.messages : [];
             if (messages.length === 0) return;
 
+            if (replace) messagesEl.innerHTML = '';
             removeWelcome();
             messages.forEach((m) => {
                 if (m.role === 'user') {
@@ -226,13 +227,13 @@ export function initAiChatWidget() {
             });
         } catch (e) {
             // 確認できなかった会話を送信先に使わない。新規操作後の遅い応答は無視する。
-            if (version === conversationVersion && currentConversationId === convId) clearConversation();
+            if (!replace && version === conversationVersion && currentConversationId === convId) clearConversation();
         }
     }
 
     /**
      * Widget 内で「新しい相談」を始める。現在の conversation_id をクリア、メッセージ領域を初期状態 (welcome) に戻す。
-     * sessionStorage も削除して、次回送信時に新規会話を作る。
+     * sessionStorage も削除し、次回送信で会話を解決する。同じ教材では最新会話を再利用する。
      */
     function startNewConversation() {
         conversationVersion++;
@@ -334,6 +335,10 @@ export function initAiChatWidget() {
             if (conversation.initialMessage) {
                 typingNode.remove();
                 appendAssistantBubble(conversation.initialMessage.content ?? '', { isError: conversation.initialMessage.status === 'error' });
+                if (sectionId) {
+                    // 再利用した会話の、今回の質問・回答を含む保存済み履歴と表示を揃える。
+                    await loadConversationHistory(conversation.id, version, true);
+                }
 
                 return;
             }

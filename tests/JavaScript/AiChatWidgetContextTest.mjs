@@ -29,13 +29,13 @@ function node() {
     };
 }
 
-async function widget(response, createdId = 'new-conversation', creationResponse = null) {
+async function widget(response, createdId = 'new-conversation', creationResponse = null, sectionId = '') {
     const elements = Object.fromEntries(['fab', 'panel', 'close', 'fullscreen', 'widget-input', 'widget-send', 'messages', 'new']
         .map((key) => [`[data-ai-chat-${key}]`, node()]));
     const root = node();
-    root.dataset = { storeUrl: '/ai-chat/conversations', fullscreenBaseUrl: '/ai-chat/conversations' };
+    root.dataset = { storeUrl: '/ai-chat/conversations', fullscreenBaseUrl: '/ai-chat/conversations', sectionId };
     root.querySelector = (key) => elements[key] ?? null;
-    const stored = new Map([[conversationKey, 'old-conversation'], [sectionKey, '']]);
+    const stored = new Map([[conversationKey, 'old-conversation'], [sectionKey, sectionId]]);
     const requests = [];
     const sends = [];
     const context = vm.createContext({
@@ -46,7 +46,7 @@ async function widget(response, createdId = 'new-conversation', creationResponse
         fetch: async (url, options) => {
             requests.push({ url, options });
             if (options?.method === 'POST') return creationResponse ?? { ok: true, status: 201, json: async () => ({ conversation: { id: createdId }, assistant_message: { content: '新しい回答', status: 'completed' } }) };
-            return response;
+            return typeof response === 'function' ? response() : response;
         },
     });
     const module = new vm.SourceTextModule(source, { context });
@@ -191,4 +191,82 @@ test('初回LLM失敗は会話IDを保存し、次の質問で同じ会話を再
     assert.equal(app.sends.length, 1);
     assert.equal(app.sends[0].url, '/ai-chat/conversations/saved-error-conversation/messages');
     assert.equal(app.sends[0].content, 'やり直す質問');
+});
+
+
+test('同じ教材で新規操作後も会話を再利用し、保存済み履歴を重複なく表示する', async () => {
+    let reads = 0;
+    const previous = { role: 'assistant', content: '同じ教材の以前の回答' };
+    const app = await widget(() => ({ ok: true, json: async () => ({
+        conversation: { id: 'old-conversation', enrollment_id: 'first-enrollment', section_id: 'section-a' },
+        widget_context: { enrollment_id: 'first-enrollment', section_id: 'section-a' },
+        messages: ++reads === 1 ? [previous] : [previous, { role: 'user', content: '今回の質問' }, { role: 'assistant', content: '新しい回答' }],
+    }) }), 'old-conversation', null, 'section-a');
+    await settle();
+    app.elements['[data-ai-chat-new]'].handlers.get('click')();
+    app.elements['[data-ai-chat-widget-input]'].value = '今回の質問';
+    app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+    await settle();
+    await settle();
+    const output = app.elements['[data-ai-chat-messages]'].innerHTML;
+    assert.ok(output.includes('同じ教材の以前の回答'));
+    assert.equal(output.split('今回の質問').length - 1, 1);
+    assert.equal(output.split('新しい回答').length - 1, 1);
+    assert.ok(output.indexOf('同じ教材の以前の回答') < output.indexOf('今回の質問'));
+    assert.equal(app.stored.get(conversationKey), 'old-conversation');
+    assert.equal(app.sends.length, 0);
+    const posts = app.requests.filter((request) => request.options?.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.equal(JSON.parse(posts[0].options.body).section_id, 'section-a');
+});
+
+for (const failure of ['http', 'network']) {
+    test(`教材の送信後の履歴取得が${failure}失敗でも今回の質問・回答と会話IDを残す`, async () => {
+        let reads = 0;
+        const app = await widget(() => {
+            if (++reads > 1) {
+                if (failure === 'network') throw new Error('network unavailable');
+                return { ok: false, status: 503 };
+            }
+            return { ok: true, json: async () => ({
+                conversation: { id: 'old-conversation', enrollment_id: 'first-enrollment', section_id: 'section-a' },
+                widget_context: { enrollment_id: 'first-enrollment', section_id: 'section-a' },
+                messages: [],
+            }) };
+        }, 'old-conversation', null, 'section-a');
+        await settle();
+        app.elements['[data-ai-chat-new]'].handlers.get('click')();
+        app.elements['[data-ai-chat-widget-input]'].value = '残る質問';
+        app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+        await settle();
+        await settle();
+        const output = app.elements['[data-ai-chat-messages]'].innerHTML;
+        assert.ok(output.includes('残る質問'));
+        assert.ok(output.includes('新しい回答'));
+        assert.equal(app.stored.get(conversationKey), 'old-conversation');
+        assert.equal(app.elements['[data-ai-chat-widget-input]'].disabled, false);
+    });
+}
+
+test('送信後の履歴取得中に新規を押しても、遅い同一会話の履歴で画面を戻さない', async () => {
+    const pending = deferred();
+    let reads = 0;
+    const data = {
+        conversation: { id: 'old-conversation', enrollment_id: 'first-enrollment', section_id: 'section-a' },
+        widget_context: { enrollment_id: 'first-enrollment', section_id: 'section-a' },
+        messages: [{ role: 'assistant', content: '戻してはいけない履歴' }],
+    };
+    const app = await widget(() => ({ ok: true, json: () => ++reads === 1 ? Promise.resolve(data) : pending.promise }), 'old-conversation', null, 'section-a');
+    await settle();
+    app.elements['[data-ai-chat-new]'].handlers.get('click')();
+    app.elements['[data-ai-chat-widget-input]'].value = '送信する質問';
+    app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+    await settle();
+    await settle();
+    assert.equal(reads, 2);
+    app.elements['[data-ai-chat-new]'].handlers.get('click')();
+    pending.resolve(data);
+    await settle();
+    assert.equal(app.stored.has(conversationKey), false);
+    assert.ok(!app.elements['[data-ai-chat-messages]'].innerHTML.includes('戻してはいけない履歴'));
 });
