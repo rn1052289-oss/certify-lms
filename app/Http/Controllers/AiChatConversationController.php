@@ -64,9 +64,11 @@ class AiChatConversationController extends Controller
     public function show(Request $request, AiChatConversation $conversation, AiChatContextService $context): JsonResponse|View
     {
         $this->authorize('view', $conversation);
-        $conversation->load(['messages', 'section', 'enrollment.certification']);
         if ($request->expectsJson()) {
-            $data = ['conversation' => $conversation, 'messages' => $conversation->messages];
+            $data = [
+                'conversation' => $conversation->only(['id', 'title', 'enrollment_id', 'section_id']),
+                'messages' => $conversation->messages,
+            ];
             if ($request->query('source') === 'widget') {
                 $validated = $request->validate(['section_id' => ['nullable', 'ulid']]);
                 $resolved = $context->resolve($request->user(), $validated['section_id'] ?? null, null);
@@ -75,6 +77,8 @@ class AiChatConversationController extends Controller
 
             return response()->json($data);
         }
+
+        $conversation->load(['messages', 'section', 'enrollment.certification']);
 
         return view('ai-chat.show', compact('conversation'));
     }

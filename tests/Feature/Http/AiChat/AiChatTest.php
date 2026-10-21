@@ -9,6 +9,7 @@ use App\Enums\AiChatMessageStatus;
 use App\Enums\CertificationStatus;
 use App\Enums\ContentStatus;
 use App\Enums\EnrollmentStatus;
+use App\Exceptions\Content\ContentNotDeletableException;
 use App\Models\AiChatConversation;
 use App\Models\AiChatMessage;
 use App\Models\Chapter;
@@ -16,6 +17,7 @@ use App\Models\Enrollment;
 use App\Models\Part;
 use App\Models\Section;
 use App\Models\User;
+use App\UseCases\Section\DestroyAction;
 use Database\Seeders\AiChatVerificationSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -72,6 +74,100 @@ class AiChatTest extends TestCase
         $this->get('/ai-chat/conversations/'.$id)->assertOk()->assertViewIs('ai-chat.show');
         $this->deleteJson('/ai-chat/conversations/'.$id)->assertNoContent();
         $this->assertDatabaseMissing('ai_chat_conversations', ['id' => $id]);
+        Http::assertNothingSent();
+    }
+
+    public function test_history_json_does_not_expose_material_or_enrollment_relations_after_access_changes(): void
+    {
+        foreach (['published', 'section', 'chapter', 'part', 'certification', 'enrollment'] as $changed) {
+            $student = User::factory()->student()->create();
+            [$enrollment, $section] = $this->sectionFor($student);
+            $conversation = $this->conversation($student);
+            $conversation->update(['enrollment_id' => $enrollment->id, 'section_id' => $section->id]);
+            $conversation->messages()->create([
+                'role' => AiChatMessageRole::User, 'status' => AiChatMessageStatus::Completed,
+                'content' => '本人の保存済み相談',
+            ]);
+            $section->update(['body' => '保存済み相談には含まれない教材の最新本文']);
+            if (in_array($changed, ['section', 'chapter', 'part'], true)) {
+                $model = match ($changed) {
+                    'section' => $section, 'chapter' => $section->chapter, 'part' => $section->chapter->part,
+                };
+                $model->update(['status' => ContentStatus::Draft]);
+            } elseif ($changed === 'certification') {
+                $enrollment->certification->update(['status' => CertificationStatus::Archived]);
+            } elseif ($changed === 'enrollment') {
+                $enrollment->update(['status' => EnrollmentStatus::Failed]);
+            }
+
+            $response = $this->actingAs($student)->getJson('/ai-chat/conversations/'.$conversation->id)
+                ->assertOk()->assertJsonPath('conversation.id', $conversation->id)
+                ->assertJsonPath('conversation.enrollment_id', $enrollment->id)
+                ->assertJsonPath('conversation.section_id', $section->id)
+                ->assertJsonPath('messages.0.content', '本人の保存済み相談')
+                ->assertJsonMissingPath('conversation.section')
+                ->assertJsonMissingPath('conversation.enrollment')
+                ->assertJsonMissingPath('conversation.messages')
+                ->assertDontSee('保存済み相談には含まれない教材の最新本文');
+            $this->assertSame(['id', 'title', 'enrollment_id', 'section_id'], array_keys($response->json('conversation')));
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_html_conversation_keeps_context_relations_for_existing_view(): void
+    {
+        $student = User::factory()->student()->create();
+        [$enrollment, $section] = $this->sectionFor($student);
+        $conversation = $this->conversation($student);
+        $conversation->update(['enrollment_id' => $enrollment->id, 'section_id' => $section->id]);
+        $this->actingAs($student)->get('/ai-chat/conversations/'.$conversation->id)
+            ->assertOk()->assertViewIs('ai-chat.show')
+            ->assertViewHas('conversation', fn (AiChatConversation $shown) => $shown->relationLoaded('messages')
+                && $shown->relationLoaded('section') && $shown->section->id === $section->id
+                && $shown->relationLoaded('enrollment') && $shown->enrollment->relationLoaded('certification'));
+        Http::assertNothingSent();
+    }
+
+    public function test_admin_can_delete_draft_section_without_deleting_ai_conversation_or_messages(): void
+    {
+        $student = User::factory()->student()->create();
+        [$enrollment, $section] = $this->sectionFor($student);
+        $conversation = $this->conversation($student);
+        $conversation->update(['enrollment_id' => $enrollment->id, 'section_id' => $section->id]);
+        foreach ([AiChatMessageRole::User, AiChatMessageRole::Assistant] as $role) {
+            $conversation->messages()->create([
+                'role' => $role, 'status' => AiChatMessageStatus::Completed,
+                'content' => '削除後も残す'.$role->value,
+            ]);
+        }
+        DB::table('ai_chat_daily_usages')->insert(['user_id' => $student->id, 'usage_date' => now()->toDateString(), 'attempts' => 1]);
+        $section->update(['status' => ContentStatus::Draft]);
+        $this->actingAs(User::factory()->admin()->create())->delete(route('admin.sections.destroy', $section))
+            ->assertRedirect(route('admin.chapters.show', $section->chapter_id));
+        $this->assertDatabaseMissing('sections', ['id' => $section->id]);
+        $this->assertDatabaseHas('ai_chat_conversations', ['id' => $conversation->id, 'enrollment_id' => $enrollment->id, 'section_id' => null]);
+        $this->assertDatabaseCount('ai_chat_messages', 2);
+        $this->assertDatabaseHas('ai_chat_messages', ['ai_chat_conversation_id' => $conversation->id, 'content' => '削除後も残すuser']);
+        $this->assertDatabaseHas('ai_chat_messages', ['ai_chat_conversation_id' => $conversation->id, 'content' => '削除後も残すassistant']);
+        $this->assertDatabaseHas('ai_chat_daily_usages', ['user_id' => $student->id, 'attempts' => 1]);
+        $this->actingAs($student)->getJson('/ai-chat/conversations/'.$conversation->id)
+            ->assertOk()->assertJsonPath('conversation.section_id', null)->assertJsonCount(2, 'messages');
+        Http::assertNothingSent();
+    }
+
+    public function test_published_section_with_ai_conversation_remains_undeletable(): void
+    {
+        $student = User::factory()->student()->create();
+        [$enrollment, $section] = $this->sectionFor($student);
+        $conversation = $this->conversation($student);
+        $conversation->update(['enrollment_id' => $enrollment->id, 'section_id' => $section->id]);
+        try {
+            app(DestroyAction::class)($section);
+            $this->fail('公開中の教材は削除できない。');
+        } catch (ContentNotDeletableException) {
+            $this->assertDatabaseHas('sections', ['id' => $section->id]);
+            $this->assertDatabaseHas('ai_chat_conversations', ['id' => $conversation->id, 'section_id' => $section->id]);
+        }
         Http::assertNothingSent();
     }
 
