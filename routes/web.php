@@ -47,6 +47,7 @@ use App\Http\Controllers\SectionQuizController;
 use App\Http\Controllers\SectionQuizResultController;
 use App\Http\Controllers\Settings\AvailabilityController as SettingsAvailabilityController;
 use App\Http\Controllers\Settings\AvatarController;
+use App\Http\Controllers\Settings\GoogleCalendarController;
 use App\Http\Controllers\Settings\PasswordController;
 use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\SettingsDefaultEnrollmentController;
@@ -631,3 +632,10 @@ if (app()->environment('local')) {
         return view('_dev.components');
     })->name('_dev.components');
 }
+
+// コーチ本人の任意 Google Calendar 連携。
+Route::middleware(['auth', 'role:coach'])->prefix('settings/google-calendar')->name('settings.google-calendar.')->group(function () {
+    Route::get('connect', [GoogleCalendarController::class, 'redirect'])->name('redirect');
+    Route::get('callback', [GoogleCalendarController::class, 'callback'])->name('callback');
+    Route::delete('/', [GoogleCalendarController::class, 'destroy'])->name('destroy');
+});

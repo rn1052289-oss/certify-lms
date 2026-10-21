@@ -25,6 +25,7 @@ use App\Models\User;
 use App\Notifications\MeetingCanceledNotification;
 use App\Notifications\MeetingReservedNotification;
 use App\Services\CoachMeetingLoadService;
+use App\Services\GoogleCalendarService;
 use App\Services\MeetingAvailabilityService;
 use App\Services\MeetingQuotaService;
 use App\UseCases\MeetingQuota\ConsumeQuotaAction;
@@ -172,12 +173,21 @@ class MeetingController extends Controller
         CoachMeetingLoadService $coachLoadService,
         MeetingQuotaService $quotaService,
         ConsumeQuotaAction $consumeAction,
+        GoogleCalendarService $calendar,
     ): RedirectResponse {
         $scheduledAt = Carbon::parse($request->validated('scheduled_at'));
         $topic = $request->validated('topic');
         $student = $enrollment->user;
 
-        $meeting = DB::transaction(function () use ($enrollment, $student, $scheduledAt, $topic, $availabilityService, $coachLoadService, $quotaService, $consumeAction) {
+        // Google 通信は DB トランザクションの外で行い、予約 POST でも busy を検証する。
+        $availabilityService->validateSlot($enrollment->certification, $scheduledAt);
+        $busyByCoach = $calendar->busyForCoaches(
+            $enrollment->certification->coaches()->with('googleCredential')->get(),
+            $scheduledAt,
+            $scheduledAt->copy()->addHour(),
+        );
+
+        $meeting = DB::transaction(function () use ($enrollment, $student, $scheduledAt, $topic, $coachLoadService, $quotaService, $consumeAction, $calendar, $busyByCoach) {
             // 同一受講生の同時予約を直列化する。残数を読む前にロックし、先行予約の消費を見たうえで判定する
             $student = User::query()->whereKey($student->id)->lockForUpdate()->firstOrFail();
 
@@ -185,9 +195,8 @@ class MeetingController extends Controller
                 throw new InsufficientMeetingQuotaException;
             }
 
-            $availabilityService->validateSlot($enrollment->certification, $scheduledAt);
-
-            $candidates = $this->findAvailableCoaches($enrollment->certification, $scheduledAt);
+            $candidates = $this->findAvailableCoaches($enrollment->certification, $scheduledAt)
+                ->reject(fn (User $coach) => $calendar->overlaps($busyByCoach[$coach->id] ?? [], $scheduledAt, $scheduledAt->copy()->addHour()));
             if ($candidates->isEmpty()) {
                 throw new MeetingNoAvailableCoachException;
             }
@@ -234,9 +243,12 @@ class MeetingController extends Controller
             return $meeting->fresh();
         });
 
+        $calendar->reserve($meeting);
+
         return redirect()
             ->route('meetings.show', $meeting)
-            ->with('success', '面談を予約しました。');
+            ->with('success', '面談を予約しました。')
+            ->with('warning', $calendar->warning());
     }
 
     /**
@@ -246,6 +258,7 @@ class MeetingController extends Controller
     public function cancel(
         Meeting $meeting,
         RefundQuotaAction $refundAction,
+        GoogleCalendarService $calendar,
     ): RedirectResponse {
         $this->authorize('cancel', $meeting);
 
@@ -295,9 +308,12 @@ class MeetingController extends Controller
             });
         });
 
+        $calendar->cancel($meeting);
+
         return redirect()
             ->route('meetings.show', $meeting)
-            ->with('success', '面談をキャンセルしました。面談回数を返却しました。');
+            ->with('success', '面談をキャンセルしました。面談回数を返却しました。')
+            ->with('warning', $calendar->warning());
     }
 
     /**
@@ -326,7 +342,7 @@ class MeetingController extends Controller
     /**
      * 予約画面が呼ぶ空き枠取得 JSON エンドポイント。
      */
-    public function fetchAvailability(Enrollment $enrollment, AvailabilityRequest $request, MeetingAvailabilityService $availabilityService): JsonResponse
+    public function fetchAvailability(Enrollment $enrollment, AvailabilityRequest $request, MeetingAvailabilityService $availabilityService, GoogleCalendarService $calendar): JsonResponse
     {
         $date = Carbon::parse($request->validated('date'));
         $slots = $availabilityService->slotsForCertification(
@@ -336,6 +352,7 @@ class MeetingController extends Controller
 
         return response()->json([
             'date' => $date->toDateString(),
+            'warning' => $calendar->warning(),
             'slots' => $slots->map(fn (array $slot) => [
                 'slot_start' => $slot['slot_start']->toIso8601String(),
                 'slot_end' => $slot['slot_end']->toIso8601String(),
