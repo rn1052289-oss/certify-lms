@@ -80,6 +80,28 @@ class UpdateTest extends TestCase
         ]);
     }
 
+    public function test_validation_fails_when_time_is_not_on_the_hour(): void
+    {
+        $coach = User::factory()->coach()->create();
+        $availability = CoachAvailability::factory()->forCoach($coach)->monday()->morning()->create();
+
+        // 更新でも 00 分以外の開始・終了時刻は受け付けない(B-A-05)
+        $response = $this->actingAs($coach)
+            ->from(route('settings.availability.index'))
+            ->patch(route('settings.availability.update', $availability), [
+                'day_of_week' => 1,
+                'start_time' => '09:30',
+                'end_time' => '10:30',
+                'is_active' => '1',
+            ]);
+
+        $response->assertSessionHasErrors(['start_time', 'end_time']);
+        $this->assertDatabaseHas('coach_availabilities', [
+            'id' => $availability->id,
+            'start_time' => '09:00:00',
+        ]);
+    }
+
     public function test_student_is_forbidden(): void
     {
         $coach = User::factory()->coach()->create();
