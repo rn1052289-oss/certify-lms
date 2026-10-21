@@ -163,6 +163,7 @@ class MeetingController extends Controller
     /**
      * 受講生の予約申請。残面談回数を確認し、空き枠から過去実績最少のコーチを自動割当して reserved で確定する。
      * 同時刻 race condition は (coach_id, scheduled_at) UNIQUE 違反として検知し 409 へ変換する。
+     * 同一受講生の同時予約は受講生の行ロックで直列化し、残面談回数を超えて成立させない。
      */
     public function store(
         Enrollment $enrollment,
@@ -177,6 +178,9 @@ class MeetingController extends Controller
         $student = $enrollment->user;
 
         $meeting = DB::transaction(function () use ($enrollment, $student, $scheduledAt, $topic, $availabilityService, $coachLoadService, $quotaService, $consumeAction) {
+            // 同一受講生の同時予約を直列化する。残数を読む前にロックし、先行予約の消費を見たうえで判定する
+            User::query()->whereKey($student->id)->lockForUpdate()->first();
+
             if ($quotaService->remaining($student) < 1) {
                 throw new InsufficientMeetingQuotaException;
             }
