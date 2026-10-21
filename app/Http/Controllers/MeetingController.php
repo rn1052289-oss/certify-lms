@@ -345,7 +345,7 @@ class MeetingController extends Controller
     }
 
     /**
-     * 担当コーチ集合のうち、(1) 当該時刻に有効な availability 枠があり、
+     * 担当コーチ集合のうち、(1) 当該時刻から 60 分間すべてを含む有効な availability 枠があり、
      * (2) 当該時刻に reserved / completed の Meeting を持たないコーチ集合を返す。
      *
      * @return Collection<int, User>
@@ -353,13 +353,15 @@ class MeetingController extends Controller
     private function findAvailableCoaches(Certification $certification, Carbon $scheduledAt): Collection
     {
         $time = $scheduledAt->format('H:i:s');
+        $endTime = $scheduledAt->copy()->addHour()->format('H:i:s');
 
         return $certification->coaches()
-            ->whereHas('coachAvailabilities', function ($q) use ($scheduledAt, $time) {
+            ->whereHas('coachAvailabilities', function ($q) use ($scheduledAt, $time, $endTime) {
+                // 開始時刻だけでなく 60 分間すべてが同じ枠に収まるコーチのみを割当対象にする(B-A-05)
                 $q->where('day_of_week', $scheduledAt->dayOfWeek)
                     ->where('is_active', true)
                     ->where('start_time', '<=', $time)
-                    ->where('end_time', '>', $time);
+                    ->where('end_time', '>=', $endTime);
             })
             ->whereDoesntHave('meetingsAsCoach', function ($q) use ($scheduledAt) {
                 $q->where('scheduled_at', $scheduledAt)

@@ -12,7 +12,7 @@ use Illuminate\Foundation\Http\FormRequest;
  *
  * `day_of_week` は Carbon の `dayOfWeek` と整合する 0(日)〜6(土) の int で受け取る
  * (`coach_availabilities.day_of_week` カラムと一致)。`start_time` / `end_time` は
- * `HH:MM` の 24h 表記。`is_active` はチェックボックス未送信を false 扱いにする。
+ * `HH:00` の 24h 表記(00 分単位)。`is_active` はチェックボックス未送信を false 扱いにする。
  */
 class StoreRequest extends FormRequest
 {
@@ -37,8 +37,9 @@ class StoreRequest extends FormRequest
     {
         return [
             'day_of_week' => ['required', 'integer', 'between:0,6'],
-            'start_time' => ['required', 'date_format:H:i'],
-            'end_time' => ['required', 'date_format:H:i', 'after:start_time'],
+            // 面談は毎時 00 分開始・60 分単位のため、枠も 00 分単位に限定する(B-A-05)
+            'start_time' => ['required', 'date_format:H:i', 'regex:/^\d{2}:00$/'],
+            'end_time' => ['required', 'date_format:H:i', 'regex:/^\d{2}:00$/', 'after:start_time'],
             'is_active' => ['boolean'],
         ];
     }
@@ -65,6 +66,8 @@ class StoreRequest extends FormRequest
             'day_of_week.between' => '曜日は日曜(0)から土曜(6)で指定してください。',
             'start_time.date_format' => '開始時刻は HH:MM 形式で指定してください。',
             'end_time.date_format' => '終了時刻は HH:MM 形式で指定してください。',
+            'start_time.regex' => '開始時刻は 00 分単位(例: 09:00)で指定してください。',
+            'end_time.regex' => '終了時刻は 00 分単位(例: 17:00)で指定してください。',
             'end_time.after' => '終了時刻は開始時刻より後を指定してください。',
         ];
     }

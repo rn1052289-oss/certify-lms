@@ -50,6 +50,7 @@
             name="start_time"
             label="開始時刻"
             type="time"
+            step="3600"
             :value="old('start_time', $defaults['start_time'])"
             :required="true"
         />
@@ -57,6 +58,7 @@
             name="end_time"
             label="終了時刻"
             type="time"
+            step="3600"
             :value="old('end_time', $defaults['end_time'])"
             :required="true"
         />
