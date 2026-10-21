@@ -164,6 +164,7 @@ class MeetingController extends Controller
     /**
      * 受講生の予約申請。残面談回数を確認し、空き枠から過去実績最少のコーチを自動割当して reserved で確定する。
      * 同時刻 race condition は (coach_id, scheduled_at) UNIQUE 違反として検知し 409 へ変換する。
+     * 同一受講生の同時予約は受講生の行ロックで直列化し、残面談回数を超えて成立させない。
      */
     public function store(
         Enrollment $enrollment,
@@ -187,6 +188,9 @@ class MeetingController extends Controller
         );
 
         $meeting = DB::transaction(function () use ($enrollment, $student, $scheduledAt, $topic, $coachLoadService, $quotaService, $consumeAction, $calendar, $busyByCoach) {
+            // 同一受講生の同時予約を直列化する。残数を読む前にロックし、先行予約の消費を見たうえで判定する
+            $student = User::query()->whereKey($student->id)->lockForUpdate()->firstOrFail();
+
             if ($quotaService->remaining($student) < 1) {
                 throw new InsufficientMeetingQuotaException;
             }
@@ -358,21 +362,28 @@ class MeetingController extends Controller
     }
 
     /**
-     * 担当コーチ集合のうち、(1) 当該時刻に有効な availability 枠があり、
+     * 担当コーチ集合のうち、(1) 当該時刻から 60 分間すべてを含む有効な availability 枠があり、
      * (2) 当該時刻に reserved / completed の Meeting を持たないコーチ集合を返す。
      *
      * @return Collection<int, User>
      */
     private function findAvailableCoaches(Certification $certification, Carbon $scheduledAt): Collection
     {
+        // 日付をまたぐ 60 分(23:00 開始)は 1 日単位の枠に収まらないため割当対象なし
+        if (! $scheduledAt->copy()->addHour()->isSameDay($scheduledAt)) {
+            return collect();
+        }
+
         $time = $scheduledAt->format('H:i:s');
+        $endTime = $scheduledAt->copy()->addHour()->format('H:i:s');
 
         return $certification->coaches()
-            ->whereHas('coachAvailabilities', function ($q) use ($scheduledAt, $time) {
+            ->whereHas('coachAvailabilities', function ($q) use ($scheduledAt, $time, $endTime) {
+                // 開始時刻だけでなく 60 分間すべてが同じ枠に収まるコーチのみを割当対象にする(B-A-05)
                 $q->where('day_of_week', $scheduledAt->dayOfWeek)
                     ->where('is_active', true)
                     ->where('start_time', '<=', $time)
-                    ->where('end_time', '>', $time);
+                    ->where('end_time', '>=', $endTime);
             })
             ->whereDoesntHave('meetingsAsCoach', function ($q) use ($scheduledAt) {
                 $q->where('scheduled_at', $scheduledAt)

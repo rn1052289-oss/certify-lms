@@ -66,7 +66,8 @@ final class MeetingAvailabilityService
         $slotCounts = [];
 
         foreach ($availabilities as $availability) {
-            $slot = Carbon::parse($date->format('Y-m-d').' '.$availability->start_time);
+            // 予約は毎時 00 分開始のため、00 分以外で登録済の枠は次の 00 分から展開する(B-A-05)
+            $slot = Carbon::parse($date->format('Y-m-d').' '.$availability->start_time)->ceilHour();
             $end = Carbon::parse($date->format('Y-m-d').' '.$availability->end_time);
 
             while ($slot->copy()->addHour() <= $end) {

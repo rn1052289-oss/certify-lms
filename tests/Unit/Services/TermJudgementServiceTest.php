@@ -100,4 +100,28 @@ class TermJudgementServiceTest extends TestCase
 
         $this->assertEquals($originalUpdatedAt->timestamp, $enrollment->refresh()->updated_at->timestamp);
     }
+
+    public function test_canceled_session_does_not_hide_another_active_session(): void
+    {
+        foreach (['in_progress', 'submitted', 'graded'] as $status) {
+            $enrollment = Enrollment::factory()->create(['current_term' => TermType::BasicLearning->value]);
+            $exam = MockExam::factory()->for($enrollment->certification)->create();
+            MockExamSession::factory()->for($enrollment)->for($exam)->create(['status' => 'canceled']);
+            MockExamSession::factory()->for($enrollment)->for($exam)->create(['status' => $status]);
+
+            $this->assertSame(TermType::MockPractice, $this->service->recalculate($enrollment));
+            $this->assertSame(TermType::MockPractice, $enrollment->fresh()->current_term);
+        }
+    }
+
+    public function test_active_session_of_another_enrollment_does_not_change_the_term(): void
+    {
+        $enrollment = Enrollment::factory()->create(['current_term' => TermType::MockPractice->value]);
+        $exam = MockExam::factory()->for($enrollment->certification)->create();
+        MockExamSession::factory()->for($enrollment)->for($exam)->create(['status' => 'canceled']);
+        MockExamSession::factory()->inProgress()->create();
+
+        $this->assertSame(TermType::BasicLearning, $this->service->recalculate($enrollment));
+        $this->assertSame(TermType::BasicLearning, $enrollment->fresh()->current_term);
+    }
 }
