@@ -1,7 +1,7 @@
 {{--
     面談設定タブの中身（コーチ専用）。Google カレンダー連携と、面談可能時間枠の週間カレンダー。
     構成: Google 連携カード（連携状態で表示分岐 / 連携・解除ボタン）→ 週間カレンダー（曜日 × 時間のグリッド、登録済の枠を色付きブロックで重ね描画 + 凡例）→ 追加モーダル + 各枠の編集 / 削除モーダル。
-    冒頭の処理は描画用の整形のみ（30 分保存値を 1 時間グリッドへ丸め、連続枠を 1 ブロックに連結）。
+    冒頭の処理は描画用の整形のみ（00 分以外の既存値を 1 時間グリッドへ丸め、連続枠を 1 ブロックに連結）。
     JS あり: 空セルのクリック / ドラッグ選択で枠追加、ブロッククリックで編集モーダルを開く（data-* フックで連携、別途読み込む JS が制御）。削除は confirm() 後にフォーム送信。
 --}}
 @php
@@ -21,7 +21,7 @@
     ];
 
     // 表示時間帯: 06:00 〜 22:00 を 1 時間刻みで描画(17 行 × 48px)。
-    // 30 分単位の保存値は許容するが、ブロック表示は 1 時間境界に丸めて配置する(精度は表示テキストで示す)。
+    // 新規登録は 00 分単位のみ(B-A-05)。それ以前の 00 分以外の保存値は、1 時間境界に丸めて配置する(精度は表示テキストで示す)。
     $hourStart = 6;
     $hourEnd = 22;
     $hoursCount = $hourEnd - $hourStart;
@@ -65,7 +65,7 @@
     /**
      * 「HH:MM」を 1 時間粒度の grid-row に丸める。先頭行(grid-row=1)は曜日ヘッダ。
      * 開始時刻は floor(切り捨て)、終了時刻は ceil(切り上げ)で扱うことで、
-     * 30 分単位の保存値も視覚的に「1 時間枠」として欠落なく表示する。
+     * 00 分以外の既存の保存値も視覚的に「1 時間枠」として欠落なく表示する。
      */
     $timeToGridRow = function (string $hhmm, bool $ceil) use ($hourStart, $hourEnd): int {
         [$h, $m] = array_map('intval', explode(':', $hhmm));
@@ -260,7 +260,8 @@
 </div>
 
 {{-- 新規作成モーダル --}}
-<x-modal id="availability-create-modal" title="時間枠を追加" size="md">
+{{-- 入力エラーで戻ったときは、送信元のモーダルを開いた状態で表示する --}}
+<x-modal id="availability-create-modal" title="時間枠を追加" size="md" :auto-open="$errors->any() && old('_modal') === 'availability-create-modal'">
     <x-slot:body>
         @include('settings.availability._partials.form', [
             'action' => route('settings.availability.store'),
@@ -273,7 +274,7 @@
 
 {{-- 編集 / 削除モーダル(各 CoachAvailability ごとに 1 つ) --}}
 @foreach ($availabilities as $availability)
-    <x-modal id="availability-edit-modal-{{ $availability->id }}" title="時間枠を編集" size="md">
+    <x-modal id="availability-edit-modal-{{ $availability->id }}" title="時間枠を編集" size="md" :auto-open="$errors->any() && old('_modal') === 'availability-edit-modal-' . $availability->id">
         <x-slot:body>
             @include('settings.availability._partials.form', [
                 'action' => route('settings.availability.update', $availability),

@@ -102,6 +102,43 @@ class UpdateTest extends TestCase
         ]);
     }
 
+    public function test_edit_modal_reopens_with_errors_only_in_submitted_form(): void
+    {
+        $coach = User::factory()->coach()->create();
+        $target = CoachAvailability::factory()->forCoach($coach)->monday()->morning()->create();
+        $other = CoachAvailability::factory()->forCoach($coach)->tuesday()->timeRange('13:00:00', '15:00:00')->create();
+        $targetModalId = 'availability-edit-modal-'.$target->id;
+        $otherModalId = 'availability-edit-modal-'.$other->id;
+
+        // 入力エラーで戻ったとき、送信した編集モーダルだけを開き、他のフォームに入力値とエラーを出さない(B-A-05)
+        $response = $this->actingAs($coach)
+            ->from(route('settings.availability.index'))
+            ->followingRedirects()
+            ->patch(route('settings.availability.update', $target), [
+                '_modal' => $targetModalId,
+                'day_of_week' => 1,
+                'start_time' => '09:30',
+                'end_time' => '10:30',
+                'is_active' => '1',
+            ]);
+
+        $response->assertOk();
+        $html = $response->getContent();
+
+        $this->assertStringContainsString('data-auto-open', $this->modalOpenTag($html, $targetModalId));
+        $this->assertStringNotContainsString('data-auto-open', $this->modalOpenTag($html, 'availability-create-modal'));
+        $this->assertStringNotContainsString('data-auto-open', $this->modalOpenTag($html, $otherModalId));
+        $this->assertSame(1, substr_count($html, '開始時刻は 00 分単位(例: 09:00)で指定してください。'));
+
+        $this->assertStringContainsString('value="09:30"', $this->modalHtml($html, $targetModalId));
+        $this->assertStringContainsString('value="13:00"', $this->modalHtml($html, $otherModalId));
+        $this->assertStringNotContainsString('value="09:30"', $this->modalHtml($html, 'availability-create-modal'));
+        $this->assertDatabaseHas('coach_availabilities', [
+            'id' => $target->id,
+            'start_time' => '09:00:00',
+        ]);
+    }
+
     public function test_student_is_forbidden(): void
     {
         $coach = User::factory()->coach()->create();
@@ -116,5 +153,25 @@ class UpdateTest extends TestCase
         ]);
 
         $response->assertForbidden();
+    }
+
+    /**
+     * ページ HTML から指定 id のモーダル部分(次のモーダルの手前まで)を切り出す。
+     */
+    private function modalHtml(string $html, string $modalId): string
+    {
+        $start = strpos($html, 'id="'.$modalId.'"');
+        $this->assertNotFalse($start, "モーダル {$modalId} が描画されていない");
+        $own = strpos($html, 'role="dialog"', $start);
+        $next = strpos($html, 'role="dialog"', $own + 1);
+
+        return $next === false ? substr($html, $start) : substr($html, $start, $next - $start);
+    }
+
+    private function modalOpenTag(string $html, string $modalId): string
+    {
+        $this->assertSame(1, preg_match('/<div\s+id="'.preg_quote($modalId, '/').'"[^>]*>/', $html, $m));
+
+        return $m[0];
     }
 }
