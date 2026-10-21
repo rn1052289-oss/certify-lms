@@ -83,7 +83,8 @@ class MeetingCoachAssignmentTest extends TestCase
 
         $response = $this->book(10);
 
-        // 09:30〜10:30 の枠では 10:00〜11:00 を満たせないため、面談可能時間外として予約させない
+        // 表示枠と割当の判定がずれていないことの確認。09:30〜10:30 の枠では 10:00〜11:00 を満たせないため、
+        // 割当前の枠検証(validateSlot)で面談可能時間外として予約させない(修正前も同じ結果になる)
         $response->assertSessionHas('error', '指定された時刻は面談可能時間外です。別の時刻をお選びください。');
         $this->assertDatabaseCount('meetings', 0);
     }

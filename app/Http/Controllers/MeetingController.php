@@ -352,6 +352,11 @@ class MeetingController extends Controller
      */
     private function findAvailableCoaches(Certification $certification, Carbon $scheduledAt): Collection
     {
+        // 日付をまたぐ 60 分(23:00 開始)は 1 日単位の枠に収まらないため割当対象なし
+        if (! $scheduledAt->copy()->addHour()->isSameDay($scheduledAt)) {
+            return collect();
+        }
+
         $time = $scheduledAt->format('H:i:s');
         $endTime = $scheduledAt->copy()->addHour()->format('H:i:s');
 
