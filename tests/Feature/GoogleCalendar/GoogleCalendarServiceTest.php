@@ -15,6 +15,7 @@ use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Mockery;
 use Tests\TestCase;
 
 class GoogleCalendarServiceTest extends TestCase
@@ -62,6 +63,100 @@ class GoogleCalendarServiceTest extends TestCase
         $this->assertSame([], $service->busyForCoaches(collect([$coach]), now(), now()->addHour()));
         $this->assertNull($service->warning());
         Http::assertNothingSent();
+    }
+
+    public function test_free_busy_budget_is_shared_across_coaches_and_repeated_calls(): void
+    {
+        $credentials = collect();
+        for ($i = 0; $i < 6; $i++) {
+            $credentials->push($this->credential());
+        }
+        $seconds = hrtime(true) / 1_000_000_000;
+        $client = Mockery::mock(GoogleCalendarClient::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $client->shouldReceive('monotonicSeconds')->andReturnUsing(function () use (&$seconds) {
+            return $seconds;
+        });
+        Http::fake(function (Request $request, array $options) use (&$seconds) {
+            $this->assertLessThanOrEqual(5, $options['timeout']);
+            // 実際には待たず、最初の通信で共有期限を使い切った状況を再現する。
+            $seconds += 6;
+
+            return Http::response(['calendars' => ['primary' => ['busy' => []]]]);
+        });
+        $service = new GoogleCalendarService($client);
+        $coaches = $credentials->map(fn (GoogleCredential $credential) => $credential->user);
+        $expected = $credentials->mapWithKeys(fn (GoogleCredential $credential) => [$credential->user_id => []])->all();
+        $start = now();
+        $this->assertSame($expected, $service->busyForCoaches($coaches, $start, $start->copy()->addHour()));
+        // キャッシュ外の期間を再取得しても、同じリクエストの期限を延長しない。
+        $this->assertSame($expected, $service->busyForCoaches($coaches, $start, $start->copy()->addHours(2)));
+        $this->assertSame(GoogleCalendarService::WARNING, $service->warning());
+        Http::assertSentCount(1);
+    }
+
+    public function test_free_busy_uses_only_budget_remaining_after_token_refresh(): void
+    {
+        $credential = $this->credential();
+        $credential->update(['expires_at' => now()->subMinute()]);
+        $seconds = hrtime(true) / 1_000_000_000;
+        $deadline = $seconds + 5;
+        $client = Mockery::mock(GoogleCalendarClient::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $client->shouldReceive('monotonicSeconds')->andReturnUsing(function () use (&$seconds) {
+            return $seconds;
+        });
+        Http::fake(function (Request $request, array $options) use (&$seconds) {
+            if ($request->url() === 'https://oauth2.googleapis.com/token') {
+                $this->assertSame(5.0, $options['timeout']);
+                $this->assertSame(3, $options['connect_timeout']);
+                $seconds += 4;
+
+                return Http::response(['access_token' => 'renewed-access', 'expires_in' => 3600]);
+            }
+            $this->assertSame(1.0, $options['timeout']);
+            $this->assertSame(1.0, $options['connect_timeout']);
+
+            return Http::response(['calendars' => ['primary' => ['busy' => []]]]);
+        });
+        $this->assertSame([], $client->busy($credential, now(), now()->addHour(), $deadline));
+        $this->assertSame('renewed-access', $credential->fresh()->access_token);
+        Http::assertSentCount(2);
+    }
+
+    public function test_sub_millisecond_free_busy_budget_sends_no_request(): void
+    {
+        $credential = $this->credential();
+        $seconds = hrtime(true) / 1_000_000_000;
+        $client = Mockery::mock(GoogleCalendarClient::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $client->shouldReceive('monotonicSeconds')->andReturn($seconds);
+
+        try {
+            $client->busy($credential, now(), now()->addHour(), $seconds + 0.0005);
+            $this->fail('1 ミリ秒未満の通信予算では送信せず例外にする。');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Google freeBusy time budget exceeded.', $exception->getMessage());
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_expired_free_busy_budget_after_refresh_falls_back_without_another_request(): void
+    {
+        $credential = $this->credential();
+        $credential->update(['expires_at' => now()->subMinute()]);
+        $seconds = hrtime(true) / 1_000_000_000;
+        $client = Mockery::mock(GoogleCalendarClient::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $client->shouldReceive('monotonicSeconds')->andReturnUsing(function () use (&$seconds) {
+            return $seconds;
+        });
+        Http::fake(function (Request $request) use (&$seconds) {
+            $this->assertSame('https://oauth2.googleapis.com/token', $request->url());
+            $seconds += 6;
+
+            return Http::response(['access_token' => 'renewed-access', 'expires_in' => 3600]);
+        });
+        $service = new GoogleCalendarService($client);
+        $this->assertSame([$credential->user_id => []], $service->busyForCoaches(collect([$credential->user]), now(), now()->addHour()));
+        $this->assertSame(GoogleCalendarService::WARNING, $service->warning());
+        Http::assertSentCount(1);
     }
 
     public function test_partial_overlap_and_utc_dates_are_compared_as_instants_with_half_open_boundaries(): void

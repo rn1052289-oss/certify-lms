@@ -24,6 +24,8 @@ class GoogleCalendarService
 
     private array $busyCache = [];
 
+    private ?float $busyDeadline = null;
+
     public function __construct(private GoogleCalendarClient $client) {}
 
     public function warning(): ?string
@@ -47,7 +49,9 @@ class GoogleCalendarService
                 continue;
             }
             try {
-                $periods = $this->client->busy($credential, $start, $end);
+                // 担当コーチ数や同一リクエスト内の再取得で、通信待ち時間を積み上げない。
+                $this->busyDeadline ??= hrtime(true) / 1_000_000_000 + 5;
+                $periods = $this->client->busy($credential, $start, $end, $this->busyDeadline);
                 foreach ($periods as $period) {
                     // 壊れた外部データもフォールバックの対象にする。
                     if (! is_string($period['start'] ?? null) || ! is_string($period['end'] ?? null) || Carbon::parse($period['start'])->gte(Carbon::parse($period['end']))) {

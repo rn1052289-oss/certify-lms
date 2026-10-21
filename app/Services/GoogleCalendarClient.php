@@ -33,10 +33,11 @@ class GoogleCalendarClient
         return $this->token(['code' => $code, 'grant_type' => 'authorization_code', 'redirect_uri' => config('services.google_calendar.redirect_uri')]);
     }
 
-    private function token(array $parameters): array
+    private function token(array $parameters, ?float $deadline = null): array
     {
         $this->ensureConfigured();
-        $response = Http::asForm()->timeout(5)->connectTimeout(3)->post('https://oauth2.googleapis.com/token', $parameters + [
+        $timeout = $this->remainingTimeout($deadline);
+        $response = Http::asForm()->withOptions(['timeout' => $timeout, 'connect_timeout' => min(3, $timeout)])->post('https://oauth2.googleapis.com/token', $parameters + [
             'client_id' => config('services.google_calendar.client_id'),
             'client_secret' => config('services.google_calendar.client_secret'),
         ]);
@@ -48,10 +49,10 @@ class GoogleCalendarClient
         return $data;
     }
 
-    private function authorized(GoogleCredential $credential): PendingRequest
+    private function authorized(GoogleCredential $credential, ?float $deadline = null): PendingRequest
     {
         if ($credential->expires_at->lessThanOrEqualTo(now()->addMinute())) {
-            $token = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $credential->refresh_token]);
+            $token = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $credential->refresh_token], $deadline);
             $credential->update([
                 'access_token' => $token['access_token'],
                 'refresh_token' => $token['refresh_token'] ?? $credential->refresh_token,
@@ -59,12 +60,14 @@ class GoogleCalendarClient
             ]);
         }
 
-        return Http::withToken($credential->access_token)->acceptJson()->timeout(5)->connectTimeout(3);
+        $timeout = $this->remainingTimeout($deadline);
+
+        return Http::withToken($credential->access_token)->acceptJson()->withOptions(['timeout' => $timeout, 'connect_timeout' => min(3, $timeout)]);
     }
 
-    public function busy(GoogleCredential $credential, CarbonInterface $start, CarbonInterface $end): array
+    public function busy(GoogleCredential $credential, CarbonInterface $start, CarbonInterface $end, ?float $deadline = null): array
     {
-        $response = $this->authorized($credential)->post('https://www.googleapis.com/calendar/v3/freeBusy', [
+        $response = $this->authorized($credential, $deadline)->post('https://www.googleapis.com/calendar/v3/freeBusy', [
             'timeMin' => $start->toRfc3339String(),
             'timeMax' => $end->toRfc3339String(),
             'items' => [['id' => $credential->calendar_id]],
@@ -105,5 +108,21 @@ class GoogleCalendarClient
         if (! config('services.google_calendar.client_id') || ! config('services.google_calendar.client_secret') || ! config('services.google_calendar.redirect_uri')) {
             throw new RuntimeException('Google Calendar is not configured.');
         }
+    }
+
+    private function remainingTimeout(?float $deadline): float
+    {
+        $remaining = $deadline === null ? 5 : $deadline - $this->monotonicSeconds();
+        // cURL のミリ秒変換で 0 (=無期限) になる短さでは送信しない。
+        if ($remaining <= 0.001) {
+            throw new RuntimeException('Google freeBusy time budget exceeded.');
+        }
+
+        return min(5, $remaining);
+    }
+
+    protected function monotonicSeconds(): float
+    {
+        return hrtime(true) / 1_000_000_000;
     }
 }
