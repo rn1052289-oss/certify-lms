@@ -39,8 +39,9 @@ class UpdateRequest extends FormRequest
     {
         return [
             'day_of_week' => ['required', 'integer', 'between:0,6'],
-            'start_time' => ['required', 'date_format:H:i'],
-            'end_time' => ['required', 'date_format:H:i', 'after:start_time'],
+            // 面談は毎時 00 分開始・60 分単位のため、枠も 00 分単位に限定する(B-A-05)
+            'start_time' => ['required', 'date_format:H:i', 'regex:/^\d{2}:00$/'],
+            'end_time' => ['required', 'date_format:H:i', 'regex:/^\d{2}:00$/', 'after:start_time'],
             'is_active' => ['boolean'],
         ];
     }
@@ -67,6 +68,8 @@ class UpdateRequest extends FormRequest
             'day_of_week.between' => '曜日は日曜(0)から土曜(6)で指定してください。',
             'start_time.date_format' => '開始時刻は HH:MM 形式で指定してください。',
             'end_time.date_format' => '終了時刻は HH:MM 形式で指定してください。',
+            'start_time.regex' => '開始時刻は 00 分単位(例: 09:00)で指定してください。',
+            'end_time.regex' => '終了時刻は 00 分単位(例: 17:00)で指定してください。',
             'end_time.after' => '終了時刻は開始時刻より後を指定してください。',
         ];
     }

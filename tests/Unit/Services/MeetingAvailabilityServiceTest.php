@@ -122,4 +122,17 @@ class MeetingAvailabilityServiceTest extends TestCase
         app(MeetingAvailabilityService::class)->validateSlot($certification, Carbon::parse('2026-06-01 09:00:00'));
         $this->addToAssertionCount(1);
     }
+
+    public function test_slots_start_on_the_hour_for_legacy_non_hour_availability(): void
+    {
+        $certification = Certification::factory()->published()->create();
+        $coach = User::factory()->coach()->create();
+        $this->attachCoach($certification, $coach);
+        // B-A-05 以前に登録された 00 分以外の枠。予約は毎時 00 分開始のため 10:00 から展開する
+        CoachAvailability::factory()->forCoach($coach)->onDay(1)->timeRange('09:30:00', '12:00:00')->create();
+
+        $slots = app(MeetingAvailabilityService::class)->slotsForCertification($certification, Carbon::parse('2026-06-01'));
+
+        $this->assertSame(['10:00', '11:00'], $slots->map(fn (array $slot) => $slot['slot_start']->format('H:i'))->all());
+    }
 }
