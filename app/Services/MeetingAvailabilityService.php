@@ -21,6 +21,8 @@ use Illuminate\Support\Collection;
  */
 final class MeetingAvailabilityService
 {
+    public function __construct(private GoogleCalendarService $calendar) {}
+
     /**
      * 指定 Certification の担当コーチ集合について、指定日 1 日分の 60 分単位空きスロットを返す。
      *
@@ -34,10 +36,12 @@ final class MeetingAvailabilityService
         $dayEnd = $date->copy()->endOfDay();
         $dayOfWeek = $date->dayOfWeek;
 
-        $coaches = $certification->coaches()->get();
+        $coaches = $certification->coaches()->with('googleCredential')->get();
         if ($coaches->isEmpty()) {
             return collect();
         }
+
+        $busyByCoach = $this->calendar->busyForCoaches($coaches, $dayStart, $dayEnd);
 
         $coachIds = $coaches->pluck('id')->all();
 
@@ -62,7 +66,8 @@ final class MeetingAvailabilityService
         $slotCounts = [];
 
         foreach ($availabilities as $availability) {
-            $slot = Carbon::parse($date->format('Y-m-d').' '.$availability->start_time);
+            // 予約は毎時 00 分開始のため、00 分以外で登録済の枠は次の 00 分から展開する(B-A-05)
+            $slot = Carbon::parse($date->format('Y-m-d').' '.$availability->start_time)->ceilHour();
             $end = Carbon::parse($date->format('Y-m-d').' '.$availability->end_time);
 
             while ($slot->copy()->addHour() <= $end) {
@@ -70,7 +75,8 @@ final class MeetingAvailabilityService
                 $coachId = $availability->coach_id;
                 $booked = $bookedByCoach[$coachId] ?? [];
 
-                if (! in_array($slotKey, $booked, true)) {
+                if (! in_array($slotKey, $booked, true)
+                    && ! $this->calendar->overlaps($busyByCoach[$coachId] ?? [], $slot, $slot->copy()->addHour())) {
                     $slotCounts[$slotKey] = ($slotCounts[$slotKey] ?? 0) + 1;
                 }
 

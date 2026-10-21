@@ -125,6 +125,11 @@ sail bin pint --dirty    # 変更ファイルのみ整形
 sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 ```
 
+## 既存不具合の修正メモ
+
+- **同一受講生の同時予約（B-A-04）**: 面談予約の処理開始時に受講生の行をロックし、そのうえで残面談回数を確認します。以前はロック後の再確認も、ロック前の最初の読み取りで確定したスナップショット（MySQL の REPEATABLE READ）を参照していたため、同じ受講生が別の時間枠へ同時に予約すると、残り回数を超えて両方成立していました。回帰テスト: `tests/Feature/Http/Meeting/MeetingQuotaConcurrencyTest.php`
+- **60 分間対応できないコーチへの割当（B-A-05）**: 面談は毎時 00 分開始・60 分単位のため、コーチの対応可能時間は 00 分単位でのみ登録・更新できるようにしました。予約確定時は開始時刻だけでなく 60 分間すべてが枠に収まるコーチだけを割り当てます。以前は開始時刻が枠内かだけを見ていたため、同じ時刻に別のコーチの枠がある場合、9:30〜10:30 の枠しかないコーチにも 10:00〜11:00 の面談が割り当てられることがありました。修正前に登録された 00 分以外の枠は、次の 00 分から予約枠として表示します。この枠を編集するときは 00 分に直して保存してください（削除はそのままできます）。あわせて、時間枠の追加・編集で入力エラーになったときは、送信したモーダルを開いた状態でエラーを表示し、他のモーダルには入力値やエラーを出さないようにしました。回帰テスト: `tests/Feature/Http/Meeting/MeetingCoachAssignmentTest.php` ほか
+
 ## 使用技術
 
 - PHP 8.5 / Laravel 10
@@ -138,9 +143,28 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 
 ## 環境変数
 
-`.env.example` をコピーすると、外部サービス連携を除く基本機能がローカルで動作します（メールは Mailpit に配信されます）。
+`.env.example` をコピーすると通常のローカル機能が動作します（メールは Mailpit に配信されます）。外部サービスとの実連携には、以下の設定が必要です。
 
 - `PUSHER_*` — チャットのリアルタイム配信に使用します。有効にする場合は Pusher のキーを取得して設定し、`BROADCAST_DRIVER=pusher` に変更してください。未設定（既定の `BROADCAST_DRIVER=log`）でもメッセージの送受信自体は動作し、相手画面へのリアルタイム反映のみ行われません
+
+### Google Calendar 連携（S-A-01）
+
+コーチ本人の Google Calendar と連携し、先約を面談の候補から除外して、予約・取消を予定へ反映します。未設定では連携できませんが、通常の面談予約は引き続き利用できます。連携済みでも Google の通信に失敗した場合は警告を返し、LMS の予約・取消を維持します。 空き時間確認の通信待ちは、トークン更新を含めて 1 リクエスト内の全コーチで 5 秒を共有し、期限後は警告付きで通常の予約処理へ進みます。
+
+| 環境変数 | 設定内容 |
+|---|---|
+| `GOOGLE_CALENDAR_CLIENT_ID` | Google Cloud で作成した Web アプリケーション用 OAuth クライアント ID |
+| `GOOGLE_CALENDAR_CLIENT_SECRET` | 同クライアントのシークレット（Git や画面・ログに公開しない） |
+| `GOOGLE_CALENDAR_REDIRECT_URI` | Google に登録する callback URL。既定のローカル環境では `http://localhost:8000/settings/google-calendar/callback` |
+
+1. Google Cloud で Google Calendar API を有効にし、OAuth 同意画面と Web アプリケーション用クライアントを用意します。外部向けのテスト公開では、連携する Google アカウントをテストユーザーに登録してください。
+2. 承認済みリダイレクト URI と `GOOGLE_CALENDAR_REDIRECT_URI` を、ポート・末尾の `/` を含めて完全一致させます。要求する scope は `https://www.googleapis.com/auth/calendar.events` と `https://www.googleapis.com/auth/calendar.freebusy` です。
+3. 手元の `.env` に上記3項目を設定し、`sail artisan config:clear` を実行します。コーチでログイン後、`/settings/google-calendar/connect` から Google の同意画面へ進み、両方の権限を許可してください。接続先は本人の primary カレンダーです。
+4. 先約と重なる枠の除外、予約後の予定作成、取消後の予定削除、連携解除後も既存予定が残ることを確認します。2026-10-21 にローカル Docker 環境で実 Google アカウントを使い、上記の同期と、通信失敗時も警告を表示して LMS の予約・取消が継続することを確認しました。
+
+表示・障害時の検証には、通常のユーザーデータを投入した local/testing 環境で `sail artisan db:seed --class=GoogleCalendarVerificationSeeder` を使用できます。固定コーチのダミー接続と未接続の状態を用意するだけで、実際の Google 接続は成立しません。既存の実トークンは上書きしません。実同期の確認には、別途本人の OAuth 同意が必要です。
+
+OAuth トークンを DB へ暗号化して保存する対応は今回の対象外です。本番運用時は、保存するトークンの暗号化を推奨します。
 
 新しい環境変数やセットアップ手順を追加した場合は、`.env.example` と本 README に追記し、チームの誰でも環境を再現できる状態を保ってください。
 

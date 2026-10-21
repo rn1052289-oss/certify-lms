@@ -25,6 +25,7 @@ use App\Models\User;
 use App\Notifications\MeetingCanceledNotification;
 use App\Notifications\MeetingReservedNotification;
 use App\Services\CoachMeetingLoadService;
+use App\Services\GoogleCalendarService;
 use App\Services\MeetingAvailabilityService;
 use App\Services\MeetingQuotaService;
 use App\UseCases\MeetingQuota\ConsumeQuotaAction;
@@ -163,6 +164,7 @@ class MeetingController extends Controller
     /**
      * 受講生の予約申請。残面談回数を確認し、空き枠から過去実績最少のコーチを自動割当して reserved で確定する。
      * 同時刻 race condition は (coach_id, scheduled_at) UNIQUE 違反として検知し 409 へ変換する。
+     * 同一受講生の同時予約は受講生の行ロックで直列化し、残面談回数を超えて成立させない。
      */
     public function store(
         Enrollment $enrollment,
@@ -171,19 +173,30 @@ class MeetingController extends Controller
         CoachMeetingLoadService $coachLoadService,
         MeetingQuotaService $quotaService,
         ConsumeQuotaAction $consumeAction,
+        GoogleCalendarService $calendar,
     ): RedirectResponse {
         $scheduledAt = Carbon::parse($request->validated('scheduled_at'));
         $topic = $request->validated('topic');
         $student = $enrollment->user;
 
-        $meeting = DB::transaction(function () use ($enrollment, $student, $scheduledAt, $topic, $availabilityService, $coachLoadService, $quotaService, $consumeAction) {
+        // Google 通信は DB トランザクションの外で行い、予約 POST でも busy を検証する。
+        $availabilityService->validateSlot($enrollment->certification, $scheduledAt);
+        $busyByCoach = $calendar->busyForCoaches(
+            $enrollment->certification->coaches()->with('googleCredential')->get(),
+            $scheduledAt,
+            $scheduledAt->copy()->addHour(),
+        );
+
+        $meeting = DB::transaction(function () use ($enrollment, $student, $scheduledAt, $topic, $coachLoadService, $quotaService, $consumeAction, $calendar, $busyByCoach) {
+            // 同一受講生の同時予約を直列化する。残数を読む前にロックし、先行予約の消費を見たうえで判定する
+            $student = User::query()->whereKey($student->id)->lockForUpdate()->firstOrFail();
+
             if ($quotaService->remaining($student) < 1) {
                 throw new InsufficientMeetingQuotaException;
             }
 
-            $availabilityService->validateSlot($enrollment->certification, $scheduledAt);
-
-            $candidates = $this->findAvailableCoaches($enrollment->certification, $scheduledAt);
+            $candidates = $this->findAvailableCoaches($enrollment->certification, $scheduledAt)
+                ->reject(fn (User $coach) => $calendar->overlaps($busyByCoach[$coach->id] ?? [], $scheduledAt, $scheduledAt->copy()->addHour()));
             if ($candidates->isEmpty()) {
                 throw new MeetingNoAvailableCoachException;
             }
@@ -230,9 +243,12 @@ class MeetingController extends Controller
             return $meeting->fresh();
         });
 
+        $calendar->reserve($meeting);
+
         return redirect()
             ->route('meetings.show', $meeting)
-            ->with('success', '面談を予約しました。');
+            ->with('success', '面談を予約しました。')
+            ->with('warning', $calendar->warning());
     }
 
     /**
@@ -242,6 +258,7 @@ class MeetingController extends Controller
     public function cancel(
         Meeting $meeting,
         RefundQuotaAction $refundAction,
+        GoogleCalendarService $calendar,
     ): RedirectResponse {
         $this->authorize('cancel', $meeting);
 
@@ -291,9 +308,12 @@ class MeetingController extends Controller
             });
         });
 
+        $calendar->cancel($meeting);
+
         return redirect()
             ->route('meetings.show', $meeting)
-            ->with('success', '面談をキャンセルしました。面談回数を返却しました。');
+            ->with('success', '面談をキャンセルしました。面談回数を返却しました。')
+            ->with('warning', $calendar->warning());
     }
 
     /**
@@ -322,7 +342,7 @@ class MeetingController extends Controller
     /**
      * 予約画面が呼ぶ空き枠取得 JSON エンドポイント。
      */
-    public function fetchAvailability(Enrollment $enrollment, AvailabilityRequest $request, MeetingAvailabilityService $availabilityService): JsonResponse
+    public function fetchAvailability(Enrollment $enrollment, AvailabilityRequest $request, MeetingAvailabilityService $availabilityService, GoogleCalendarService $calendar): JsonResponse
     {
         $date = Carbon::parse($request->validated('date'));
         $slots = $availabilityService->slotsForCertification(
@@ -332,6 +352,7 @@ class MeetingController extends Controller
 
         return response()->json([
             'date' => $date->toDateString(),
+            'warning' => $calendar->warning(),
             'slots' => $slots->map(fn (array $slot) => [
                 'slot_start' => $slot['slot_start']->toIso8601String(),
                 'slot_end' => $slot['slot_end']->toIso8601String(),
@@ -341,21 +362,28 @@ class MeetingController extends Controller
     }
 
     /**
-     * 担当コーチ集合のうち、(1) 当該時刻に有効な availability 枠があり、
+     * 担当コーチ集合のうち、(1) 当該時刻から 60 分間すべてを含む有効な availability 枠があり、
      * (2) 当該時刻に reserved / completed の Meeting を持たないコーチ集合を返す。
      *
      * @return Collection<int, User>
      */
     private function findAvailableCoaches(Certification $certification, Carbon $scheduledAt): Collection
     {
+        // 日付をまたぐ 60 分(23:00 開始)は 1 日単位の枠に収まらないため割当対象なし
+        if (! $scheduledAt->copy()->addHour()->isSameDay($scheduledAt)) {
+            return collect();
+        }
+
         $time = $scheduledAt->format('H:i:s');
+        $endTime = $scheduledAt->copy()->addHour()->format('H:i:s');
 
         return $certification->coaches()
-            ->whereHas('coachAvailabilities', function ($q) use ($scheduledAt, $time) {
+            ->whereHas('coachAvailabilities', function ($q) use ($scheduledAt, $time, $endTime) {
+                // 開始時刻だけでなく 60 分間すべてが同じ枠に収まるコーチのみを割当対象にする(B-A-05)
                 $q->where('day_of_week', $scheduledAt->dayOfWeek)
                     ->where('is_active', true)
                     ->where('start_time', '<=', $time)
-                    ->where('end_time', '>', $time);
+                    ->where('end_time', '>=', $endTime);
             })
             ->whereDoesntHave('meetingsAsCoach', function ($q) use ($scheduledAt) {
                 $q->where('scheduled_at', $scheduledAt)

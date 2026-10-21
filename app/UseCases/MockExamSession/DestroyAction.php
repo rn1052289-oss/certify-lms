@@ -28,6 +28,8 @@ final class DestroyAction
     public function __invoke(MockExamSession $session): MockExamSession
     {
         return DB::transaction(function () use ($session) {
+            $enrollment = $session->enrollment()->lockForUpdate()->firstOrFail();
+
             $session = MockExamSession::query()
                 ->lockForUpdate()
                 ->findOrFail($session->id);
@@ -41,7 +43,7 @@ final class DestroyAction
                 'canceled_at' => now(),
             ]);
 
-            $this->termJudgement->recalculate($session->enrollment);
+            $this->termJudgement->recalculate($enrollment);
 
             return $session->refresh();
         });
