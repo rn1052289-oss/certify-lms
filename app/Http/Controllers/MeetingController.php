@@ -179,7 +179,7 @@ class MeetingController extends Controller
 
         $meeting = DB::transaction(function () use ($enrollment, $student, $scheduledAt, $topic, $availabilityService, $coachLoadService, $quotaService, $consumeAction) {
             // 同一受講生の同時予約を直列化する。残数を読む前にロックし、先行予約の消費を見たうえで判定する
-            User::query()->whereKey($student->id)->lockForUpdate()->first();
+            $student = User::query()->whereKey($student->id)->lockForUpdate()->firstOrFail();
 
             if ($quotaService->remaining($student) < 1) {
                 throw new InsufficientMeetingQuotaException;

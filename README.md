@@ -127,7 +127,7 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 
 ## 既存不具合の修正メモ
 
-- **同一受講生の同時予約（B-A-04）**: 面談予約の処理開始時に受講生の行をロックし、そのうえで残面談回数を確認します。以前は残数確認がロック前の読み取り（MySQL の REPEATABLE READ のスナップショット）だったため、同じ受講生が別の時間枠へ同時に予約すると、残り回数を超えて両方成立していました。回帰テスト: `tests/Feature/Http/Meeting/MeetingQuotaConcurrencyTest.php`
+- **同一受講生の同時予約（B-A-04）**: 面談予約の処理開始時に受講生の行をロックし、そのうえで残面談回数を確認します。以前はロック後の再確認も、ロック前の最初の読み取りで確定したスナップショット（MySQL の REPEATABLE READ）を参照していたため、同じ受講生が別の時間枠へ同時に予約すると、残り回数を超えて両方成立していました。回帰テスト: `tests/Feature/Http/Meeting/MeetingQuotaConcurrencyTest.php`
 
 ## 使用技術
 

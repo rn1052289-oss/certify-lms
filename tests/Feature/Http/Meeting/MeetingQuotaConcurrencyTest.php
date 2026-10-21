@@ -79,6 +79,7 @@ class MeetingQuotaConcurrencyTest extends TestCase
             );
             $this->assertSame(1, Meeting::query()->where('student_id', $student->id)
                 ->where('status', MeetingStatus::Reserved->value)->count());
+            $this->assertDatabaseCount('meetings', 1);
             $this->assertDatabaseCount('meeting_quota_transactions', 1);
             $this->assertDatabaseHas('meeting_quota_transactions', [
                 'user_id' => $student->id,
