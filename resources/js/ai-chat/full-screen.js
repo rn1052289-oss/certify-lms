@@ -96,6 +96,7 @@ function initForm() {
         }
     });
 
+    let submittedContent = '';
     const client = new AiChatClient({
         storeUrl: form.dataset.storeUrl,
         // ユーザー発言は送信直後に楽観表示するため、サーバー応答時の重複描画はしない
@@ -114,6 +115,10 @@ function initForm() {
         },
         onError: (err) => {
             clearTyping();
+            if ([422, 429, 503].includes(err.status) && textarea.value === '') {
+                textarea.value = submittedContent;
+                autoResize();
+            }
             renderFullScreenMessage(list, {
                 id: 'tmp-error-' + Date.now(),
                 role: 'assistant',
@@ -130,6 +135,7 @@ function initForm() {
         const content = textarea.value.trim();
         if (!content) return;
 
+        submittedContent = content;
         submit.disabled = true;
         emptyState?.remove();
         textarea.value = '';

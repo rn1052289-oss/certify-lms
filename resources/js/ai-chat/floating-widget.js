@@ -352,6 +352,7 @@ export function initAiChatWidget() {
                 onError: (err) => {
                     typingNode.remove();
                     if (version !== conversationVersion) return;
+                    if ([422, 429, 503].includes(err.status) && input.value === '') input.value = content;
                     appendAssistantBubble(describeError(err), { isError: true });
                 },
             });

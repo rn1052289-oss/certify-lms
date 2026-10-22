@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 
 const source = await fs.readFile(new URL('../../resources/js/ai-chat/floating-widget.js', import.meta.url), 'utf8');
+const clientSource = await fs.readFile(new URL('../../resources/js/ai-chat/chat-client.js', import.meta.url), 'utf8');
 const conversationKey = 'certify.aichat.current_conversation_id';
 const sectionKey = 'certify.aichat.current_conversation_section_id';
 
@@ -29,7 +30,7 @@ function node() {
     };
 }
 
-async function widget(response, createdId = 'new-conversation', creationResponse = null, sectionId = '') {
+async function widget(response, createdId = 'new-conversation', creationResponse = null, sectionId = '', messageResponse = null) {
     const elements = Object.fromEntries(['fab', 'panel', 'close', 'fullscreen', 'widget-input', 'widget-send', 'messages', 'new']
         .map((key) => [`[data-ai-chat-${key}]`, node()]));
     const root = node();
@@ -45,12 +46,14 @@ async function widget(response, createdId = 'new-conversation', creationResponse
         window: { location: { href: '' } },
         fetch: async (url, options) => {
             requests.push({ url, options });
+            if (options?.method === 'POST' && url.endsWith('/messages') && messageResponse) return typeof messageResponse === 'function' ? messageResponse() : messageResponse;
             if (options?.method === 'POST') return creationResponse ?? { ok: true, status: 201, json: async () => ({ conversation: { id: createdId }, assistant_message: { content: '新しい回答', status: 'completed' } }) };
             return typeof response === 'function' ? response() : response;
         },
     });
     const module = new vm.SourceTextModule(source, { context });
     await module.link(async (specifier) => {
+        if (specifier.endsWith('chat-client.js') && messageResponse) return new vm.SourceTextModule(clientSource, { context });
         const exports = specifier.endsWith('chat-client.js') ? { AiChatClient: class {
             constructor(options) { this.options = options; }
             async sendSync(content) { sends.push({ url: this.options.storeUrl, content }); }
@@ -269,4 +272,33 @@ test('送信後の履歴取得中に新規を押しても、遅い同一会話�
     await settle();
     assert.equal(app.stored.has(conversationKey), false);
     assert.ok(!app.elements['[data-ai-chat-messages]'].innerHTML.includes('戻してはいけない履歴'));
+});
+
+for (const status of [422, 429, 503, 502]) {
+    test(`既存会話${status}では未受付の質問だけ入力欄へ戻す`, async () => {
+        const app = await widget({ ok: true, json: async () => history() }, 'unused', null, '', {
+            ok: false, status, json: async () => ({ upstream_status: 503 }),
+        });
+        await settle();
+        const input = app.elements['[data-ai-chat-widget-input]'];
+        input.value = '再送できる質問';
+        app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+        await settle();
+        assert.equal(input.value, status === 502 ? '' : '再送できる質問');
+        assert.equal(input.disabled, false);
+        assert.equal(app.stored.get(conversationKey), 'old-conversation');
+    });
+}
+
+test('既存会話の受付拒否が遅れても新規操作後の入力を戻さない', async () => {
+    const pending = deferred();
+    const app = await widget({ ok: true, json: async () => history() }, 'unused', null, '', () => pending.promise);
+    await settle();
+    app.elements['[data-ai-chat-widget-input]'].value = '前の質問';
+    app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+    await settle();
+    app.elements['[data-ai-chat-new]'].handlers.get('click')();
+    pending.resolve({ ok: false, status: 429 });
+    await settle();
+    assert.equal(app.elements['[data-ai-chat-widget-input]'].value, '');
 });
