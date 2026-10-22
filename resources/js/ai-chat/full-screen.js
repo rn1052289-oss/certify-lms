@@ -15,10 +15,25 @@ function initForm() {
 
     const textarea = form.querySelector('[data-ai-chat-textarea]');
     const submit = form.querySelector('[data-ai-chat-submit]');
-    const list = document.querySelector('[data-message-list]');
+    let list = document.querySelector('[data-message-list]');
     const scroller = document.querySelector('[data-message-scroller]');
     const titleEl = document.querySelector('[data-conversation-title]');
+    const titleInput = document.querySelector('#rename-ai-chat-form input[name="title"]');
+    let titleEdited = titleInput ? titleInput.value !== titleEl?.textContent?.trim() : false;
+    titleInput?.addEventListener('input', () => { titleEdited = true; });
 
+    // 提供画面は空の会話に <ul> を出さないため、最初の送信先を用意する。
+    const emptyState = !list ? scroller?.firstElementChild : null;
+    if (!list && scroller) {
+        list = document.createElement('ul');
+        list.dataset.messageList = '';
+        list.setAttribute('role', 'log');
+        list.setAttribute('aria-live', 'polite');
+        list.setAttribute('aria-atomic', 'false');
+        list.setAttribute('aria-label', 'AI 相談メッセージ');
+        list.className = 'flex flex-col gap-4 max-w-[760px] mx-auto w-full';
+        scroller.appendChild(list);
+    }
     if (!list) return;
 
     const viewerName = document.querySelector('meta[name="auth-user-name"]')?.content
@@ -81,6 +96,7 @@ function initForm() {
         }
     });
 
+    let submittedContent = '';
     const client = new AiChatClient({
         storeUrl: form.dataset.storeUrl,
         // ユーザー発言は送信直後に楽観表示するため、サーバー応答時の重複描画はしない
@@ -92,11 +108,17 @@ function initForm() {
         onTitleUpdated: ({ title }) => {
             if (! title) return;
             if (titleEl) titleEl.textContent = title;
+            // 自動命名を編集欄へ反映し、本人が書き始めた下書きは保持する。
+            if (titleInput && !titleEdited) titleInput.value = title;
             const parts = document.title.split(' | ');
             document.title = parts.length > 1 ? `${title} | ${parts[parts.length - 1]}` : title;
         },
         onError: (err) => {
             clearTyping();
+            if ([422, 429, 503].includes(err.status) && textarea.value === '') {
+                textarea.value = submittedContent;
+                autoResize();
+            }
             renderFullScreenMessage(list, {
                 id: 'tmp-error-' + Date.now(),
                 role: 'assistant',
@@ -113,7 +135,9 @@ function initForm() {
         const content = textarea.value.trim();
         if (!content) return;
 
+        submittedContent = content;
         submit.disabled = true;
+        emptyState?.remove();
         textarea.value = '';
         textarea.style.height = '';
         autoResize();
@@ -131,6 +155,12 @@ function initForm() {
 
         try {
             await client.sendSync(content);
+        } catch (error) {
+            clearTyping();
+            renderFullScreenMessage(list, {
+                id: 'tmp-error-' + Date.now(), role: 'assistant', status: 'error',
+                content: '送信に失敗しました。時間をおいて再度お試しください。', created_at: new Date().toISOString(),
+            }, { viewerName });
         } finally {
             submit.disabled = false;
             clearTyping();
@@ -142,6 +172,7 @@ function initForm() {
 }
 
 function describeError(err) {
+    if (err.status === 503) return 'AI 相談は現在利用できません。管理者にお問い合わせください。';
     if (err.type === 'rate-limit') return '本日の利用上限に達しました。明日 0:00 以降に再度ご利用ください。';
     if (err.type === 'validation') return '入力内容を確認してください (1-2000 文字)。';
     if (err.type === 'llm') {

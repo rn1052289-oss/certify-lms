@@ -132,7 +132,58 @@ class GradeActionTest extends TestCase
 
         $session->refresh();
         $this->assertSame(1, $session->total_correct);
+        $this->assertSame('33.33', $session->score_percentage);
         // 1/3 = 33.33% — 50% 未満で不合格
         $this->assertFalse($session->pass);
+    }
+
+    public function test_grades_eighty_and_one_hundred_percent_without_changing_past_results(): void
+    {
+        $pastSession = MockExamSession::factory()->graded()->create([
+            'score_percentage' => 0.80,
+            'pass' => false,
+        ]);
+
+        foreach ([[4, '80.00'], [5, '100.00']] as [$correctCount, $expectedPercentage]) {
+            $mockExam = MockExam::factory()->published()->passingScore(60)->create();
+            $questions = collect();
+            for ($i = 0; $i < 5; $i++) {
+                $questions->push(MockExamQuestion::factory()->forMockExam($mockExam)->withOptions(4, 0)->create(['order' => $i]));
+            }
+            $session = MockExamSession::factory()->forMockExam($mockExam)->inProgress()->create([
+                'generated_question_ids' => $questions->pluck('id')->all(),
+                'total_questions' => 5,
+                'passing_score_snapshot' => 60,
+            ]);
+            foreach ($questions as $index => $question) {
+                $option = $question->options->firstWhere('is_correct', $index < $correctCount);
+                MockExamAnswer::factory()->create([
+                    'mock_exam_session_id' => $session->id,
+                    'mock_exam_question_id' => $question->id,
+                    'selected_option_id' => $option->id,
+                ]);
+            }
+
+            (app(GradeAction::class))($session);
+
+            $this->assertSame($expectedPercentage, $session->fresh()->score_percentage);
+            $this->assertTrue($session->fresh()->pass);
+        }
+
+        $this->assertSame('0.80', $pastSession->fresh()->score_percentage);
+        $this->assertFalse($pastSession->fresh()->pass);
+    }
+
+    public function test_grades_zero_questions_without_division_by_zero(): void
+    {
+        $session = MockExamSession::factory()->inProgress()->create([
+            'total_questions' => 0,
+            'passing_score_snapshot' => 60,
+        ]);
+
+        (app(GradeAction::class))($session);
+
+        $this->assertSame('0.00', $session->fresh()->score_percentage);
+        $this->assertFalse($session->fresh()->pass);
     }
 }

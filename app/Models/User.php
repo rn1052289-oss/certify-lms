@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -27,6 +28,11 @@ use Illuminate\Notifications\Notifiable;
 class User extends Authenticatable
 {
     use HasFactory, HasUlids, Notifiable, SoftDeletes;
+
+    public function googleCredential(): HasOne
+    {
+        return $this->hasOne(GoogleCredential::class);
+    }
 
     protected $fillable = [
         'name',
@@ -117,6 +123,12 @@ class User extends Authenticatable
             ->whereIn('status', [EnrollmentStatus::Learning->value, EnrollmentStatus::Passed->value])
             ->with('certification')
             ->orderBy('created_at');
+    }
+
+    /** @return HasMany<AiChatConversation, $this> */
+    public function aiChatConversations(): HasMany
+    {
+        return $this->hasMany(AiChatConversation::class);
     }
 
     /**

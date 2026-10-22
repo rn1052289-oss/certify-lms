@@ -48,11 +48,13 @@ export function initAiChatWidget() {
 
     let lastFocus = null;
     let currentConversationId = null;
+    let conversationVersion = 0;
+    let historyReady = Promise.resolve();
     try {
         const savedConvId = sessionStorage.getItem(STORAGE_CONV);
         const savedSectionId = sessionStorage.getItem(STORAGE_CONV_SECTION);
-        // 同じ section コンテキスト (両方とも全般 = null、または同じ section_id) なら継続使用
-        // 異なる section に移動していたら、古い会話を引きずらないようリセット
+        // section が一致しても、資格は履歴 API の現在の受講登録 ID と照合してから再利用する。
+        // 全般相談の section は常に空なので、ここだけで文脈の一致を判断しない。
         if (savedConvId && savedSectionId === (sectionId ?? '')) {
             currentConversationId = savedConvId;
         } else {
@@ -153,6 +155,7 @@ export function initAiChatWidget() {
     }
 
     function describeError(err) {
+        if (err?.status === 503) return 'AI 相談は現在利用できません。管理者にお問い合わせください。';
         if (err?.type === 'rate-limit') return '本日の利用上限に達しました。明日 0:00 以降に再度ご利用ください。';
         if (err?.type === 'llm') {
             const upstream = err.upstreamStatus;
@@ -168,31 +171,52 @@ export function initAiChatWidget() {
         return '送信に失敗しました。時間をおいて再度お試しください。';
     }
 
+    function clearConversation() {
+        currentConversationId = null;
+        try {
+            sessionStorage.removeItem(STORAGE_CONV);
+            sessionStorage.removeItem(STORAGE_CONV_SECTION);
+        } catch (e) {}
+    }
+
     /**
      * sessionStorage に conversation_id が残っている時、その会話の過去メッセージを fetch して
      * Widget の messages エリアに復元する。サイドバー (フル画面) と Widget の表示を一貫させるため。
      */
-    async function loadConversationHistory(convId) {
+    async function loadConversationHistory(convId, version, replace = false) {
         try {
-            const res = await fetch(`/ai-chat/conversations/${convId}`, {
+            const query = new URLSearchParams({ source: 'widget' });
+            if (sectionId) query.set('section_id', sectionId);
+            const res = await fetch(`/ai-chat/conversations/${convId}?${query}`, {
                 headers: {
                     Accept: 'application/json',
                     'X-Requested-With': 'XMLHttpRequest',
                 },
                 credentials: 'same-origin',
             });
+            if (version !== conversationVersion || currentConversationId !== convId) return;
             if (!res.ok) {
-                // 削除済 / 他者会話 など、復元できない場合は sessionStorage をクリアして新規扱いに
-                sessionStorage.removeItem(STORAGE_CONV);
-                sessionStorage.removeItem(STORAGE_CONV_SECTION);
-                currentConversationId = null;
+                // 削除済・他者会話などは引き継がず、次回送信で新規会話を作る。
+                if (!replace || res.status === 403 || res.status === 404) clearConversation();
 
                 return;
             }
             const data = await res.json();
-            const messages = Array.isArray(data?.messages) ? data.messages : [];
+            if (version !== conversationVersion || currentConversationId !== convId) return;
+            // 会話の作成時点の資格と、サーバーが解決した現在の資格を ID で照合する。
+            // 資格名は同名になり得るため、表示文字を比較しない。
+            if (!data?.widget_context || !data?.conversation
+                || (data.conversation.enrollment_id ?? null) !== data.widget_context.enrollment_id
+                || (data.conversation.section_id ?? null) !== (sectionId ?? null)
+                || data.widget_context.section_id !== (sectionId ?? null)) {
+                clearConversation();
+
+                return;
+            }
+            const messages = Array.isArray(data.messages) ? data.messages : [];
             if (messages.length === 0) return;
 
+            if (replace) messagesEl.innerHTML = '';
             removeWelcome();
             messages.forEach((m) => {
                 if (m.role === 'user') {
@@ -202,20 +226,19 @@ export function initAiChatWidget() {
                 }
             });
         } catch (e) {
-            // 履歴復元の失敗は致命的ではないので無視 (新規扱いで送信は可能)
+            // 確認できなかった会話を送信先に使わない。新規操作後の遅い応答は無視する。
+            if (!replace && version === conversationVersion && currentConversationId === convId) clearConversation();
         }
     }
 
     /**
      * Widget 内で「新しい相談」を始める。現在の conversation_id をクリア、メッセージ領域を初期状態 (welcome) に戻す。
-     * sessionStorage も削除して、次回送信時に新規会話を作る。
+     * sessionStorage も削除し、次回送信で会話を解決する。同じ教材では最新会話を再利用する。
      */
     function startNewConversation() {
-        currentConversationId = null;
-        try {
-            sessionStorage.removeItem(STORAGE_CONV);
-            sessionStorage.removeItem(STORAGE_CONV_SECTION);
-        } catch (e) {}
+        conversationVersion++;
+        historyReady = Promise.resolve();
+        clearConversation();
         // 過去メッセージを全削除して welcome を再生成
         messagesEl.innerHTML = '';
         renderWelcomeMessage();
@@ -248,16 +271,17 @@ export function initAiChatWidget() {
         });
     }
 
-    async function ensureConversation() {
-        if (currentConversationId) return currentConversationId;
+    async function ensureConversation(content) {
+        if (currentConversationId) return { id: currentConversationId, initialMessage: null };
+        const version = conversationVersion;
 
         const body = {
             source: 'widget',
+            message: content,
         };
         if (sectionId) body.section_id = sectionId;
 
-        // Accept: application/json により Controller は redirect ではなく JSON を返す
-        // (200 = 既存会話再開 / 201 = 新規作成)
+        // 初回は会話と質問を同時に受け付け、拒否された場合に空の会話を残さない。
         const res = await fetch(storeUrl, {
             method: 'POST',
             headers: {
@@ -269,12 +293,17 @@ export function initAiChatWidget() {
             credentials: 'same-origin',
             body: JSON.stringify(body),
         });
-        if (!res.ok) {
-            throw new Error(`conversation create failed (HTTP ${res.status})`);
-        }
-
         const data = await res.json().catch(() => null);
-        if (data?.conversation?.id) {
+        if (version !== conversationVersion) throw new Error('conversation changed');
+        // LLM 失敗は受付後なので、保存された会話とエラー履歴を継続できるようにする。
+        if ((!res.ok && res.status !== 502) || !data?.conversation?.id || !data?.assistant_message) {
+            const error = new Error(`conversation create failed (HTTP ${res.status})`);
+            error.status = res.status;
+            error.type = res.status === 429 ? 'rate-limit' : res.status === 422 ? 'validation' : 'http';
+            error.retryContent = true;
+            throw error;
+        }
+        if (data.conversation.id) {
             currentConversationId = data.conversation.id;
             try {
                 sessionStorage.setItem(STORAGE_CONV, currentConversationId);
@@ -282,7 +311,7 @@ export function initAiChatWidget() {
                 sessionStorage.setItem(STORAGE_CONV_SECTION, sectionId ?? '');
             } catch (e) {}
 
-            return currentConversationId;
+            return { id: currentConversationId, initialMessage: data.assistant_message };
         }
         throw new Error('conversation id resolution failed');
     }
@@ -290,29 +319,50 @@ export function initAiChatWidget() {
     async function send(content) {
         sendBtn.disabled = true;
         input.disabled = true;
-        // 送信直後に入力欄をクリア(楽観的 UI、AI 応答を待たずに空へ戻す)
-        input.value = '';
-        input.style.height = '';
-        appendUserBubble(content);
-        const typingNode = appendTypingBubble();
+        const version = conversationVersion;
+        let typingNode = null;
 
         try {
-            const convId = await ensureConversation();
+            // 資格を照合した履歴が先に並ぶよう、復元中の送信を待たせる。
+            await historyReady;
+            if (version !== conversationVersion) return;
+            input.value = '';
+            input.style.height = '';
+            appendUserBubble(content);
+            typingNode = appendTypingBubble();
+            const conversation = await ensureConversation(content);
+            if (version !== conversationVersion) return;
+            if (conversation.initialMessage) {
+                typingNode.remove();
+                appendAssistantBubble(conversation.initialMessage.content ?? '', { isError: conversation.initialMessage.status === 'error' });
+                if (sectionId) {
+                    // 再利用した会話の、今回の質問・回答を含む保存済み履歴と表示を揃える。
+                    await loadConversationHistory(conversation.id, version, true);
+                }
+
+                return;
+            }
             const client = new AiChatClient({
-                storeUrl: `/ai-chat/conversations/${convId}/messages`,
+                storeUrl: `/ai-chat/conversations/${conversation.id}/messages`,
                 onAssistantMessage: (msg) => {
                     typingNode.remove();
+                    if (version !== conversationVersion) return;
                     appendAssistantBubble(msg.content ?? '', { isError: msg.status === 'error' });
                 },
                 onError: (err) => {
                     typingNode.remove();
+                    if (version !== conversationVersion) return;
+                    if ([422, 429, 503].includes(err.status) && input.value === '') input.value = content;
                     appendAssistantBubble(describeError(err), { isError: true });
                 },
             });
             await client.sendSync(content);
         } catch (err) {
-            typingNode.remove();
-            appendAssistantBubble('送信に失敗しました。', { isError: true });
+            typingNode?.remove();
+            if (version === conversationVersion) {
+                if (err.retryContent) input.value = content;
+                appendAssistantBubble(describeError(err), { isError: true });
+            }
         } finally {
             sendBtn.disabled = false;
             input.disabled = false;
@@ -323,7 +373,8 @@ export function initAiChatWidget() {
     // FAB / panel open / close
     fab.addEventListener('click', () => setOpen(true));
     closeBtn?.addEventListener('click', () => setOpen(false));
-    fullscreenBtn?.addEventListener('click', () => {
+    fullscreenBtn?.addEventListener('click', async () => {
+        await historyReady;
         if (currentConversationId) {
             window.location.href = `${fullscreenBase}/${currentConversationId}`;
         } else {
@@ -337,7 +388,7 @@ export function initAiChatWidget() {
 
     // sessionStorage に conversation_id があれば、開時に過去メッセージを復元 (Widget とサイドバーの表示一貫)
     if (currentConversationId) {
-        loadConversationHistory(currentConversationId);
+        historyReady = loadConversationHistory(currentConversationId, conversationVersion);
     }
 
     document.addEventListener('keydown', (e) => {

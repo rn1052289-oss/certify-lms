@@ -10,9 +10,14 @@
      * - $action: form の action URL
      * - $method: 'POST'（新規）or 'PATCH'（更新）
      * - $availability: 編集対象の時間枠（新規時 null）
-     * - $modalId: 紐づくモーダルの id（キャンセルボタン用）
+     * - $modalId: 紐づくモーダルの id（キャンセルボタン用 / 入力エラー時に開き直すモーダルの判定用）
      */
     $availability = $availability ?? null;
+
+    // 1 ページに追加用と編集用のフォームが並び項目名も同じため、入力値とエラーは送信元のフォームにだけ戻す
+    $isSubmitted = old('_modal') === $modalId;
+    $fieldError = fn (string $field): string => $isSubmitted ? (string) $errors->first($field) : '';
+    $fieldOld = fn (string $field, mixed $default): mixed => $isSubmitted ? old($field, $default) : $default;
     $dayOptions = [
         0 => '日曜日',
         1 => '月曜日',
@@ -36,12 +41,14 @@
     @if ($method === 'PATCH')
         @method('PATCH')
     @endif
+    <input type="hidden" name="_modal" value="{{ $modalId }}">
 
     <x-form.select
         name="day_of_week"
         label="曜日"
         :options="$dayOptions"
-        :value="old('day_of_week', (string) $defaults['day_of_week'])"
+        :value="$fieldOld('day_of_week', (string) $defaults['day_of_week'])"
+        :error="$fieldError('day_of_week')"
         :required="true"
     />
 
@@ -50,14 +57,18 @@
             name="start_time"
             label="開始時刻"
             type="time"
-            :value="old('start_time', $defaults['start_time'])"
+            step="3600"
+            :value="$fieldOld('start_time', $defaults['start_time'])"
+            :error="$fieldError('start_time')"
             :required="true"
         />
         <x-form.input
             name="end_time"
             label="終了時刻"
             type="time"
-            :value="old('end_time', $defaults['end_time'])"
+            step="3600"
+            :value="$fieldOld('end_time', $defaults['end_time'])"
+            :error="$fieldError('end_time')"
             :required="true"
         />
     </div>
@@ -65,7 +76,7 @@
     <x-form.checkbox
         name="is_active"
         label="この時間枠を有効にする(無効化すると受講生の予約画面から外れます)"
-        :checked="(bool) old('is_active', $defaults['is_active'])"
+        :checked="(bool) $fieldOld('is_active', $defaults['is_active'])"
     />
 
     <div class="flex items-center justify-end gap-2 pt-3 border-t border-subtle">

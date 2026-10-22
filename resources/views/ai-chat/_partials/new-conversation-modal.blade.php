@@ -10,6 +10,7 @@
             <x-form.textarea
                 name="message"
                 label="最初の質問 (任意、後から送信可)"
+                :value="old('message')"
                 :rows="3"
                 :maxlength="2000"
                 placeholder="例: 二分探索木の平均比較回数 O(log n) の理由を教えてください"

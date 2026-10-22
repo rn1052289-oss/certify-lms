@@ -152,21 +152,27 @@ class SlotPicker {
         this.slotsEmpty?.classList.add('hidden');
 
         try {
-            const slots = this.slotCache.has(key)
+            const result = this.slotCache.has(key)
                 ? this.slotCache.get(key)
-                : (await getJson(`${this.endpoint}?date=${encodeURIComponent(key)}`)).slots ?? [];
-            this.slotCache.set(key, slots);
-            this.renderSlots(slots);
+                : await getJson(`${this.endpoint}?date=${encodeURIComponent(key)}`);
+            this.slotCache.set(key, result);
+            this.renderSlots(result.slots ?? [], result.warning);
         } catch (error) {
             this.slotsRoot.innerHTML = `<div class="col-span-2 text-sm text-danger-600 py-4 text-center">空き枠の取得に失敗しました。再度お試しください。</div>`;
         }
     }
 
-    renderSlots(slots) {
+    renderSlots(slots, warningMessage = null) {
         if (!this.slotsRoot) {
             return;
         }
         this.slotsRoot.innerHTML = '';
+        if (warningMessage) {
+            const warning = document.createElement('p');
+            warning.className = 'col-span-2 text-sm text-warning-800';
+            warning.textContent = warningMessage;
+            this.slotsRoot.appendChild(warning);
+        }
         if (slots.length === 0) {
             this.slotsEmpty?.classList.remove('hidden');
             return;
@@ -205,9 +211,9 @@ class SlotPicker {
     selectSlot(slot) {
         this.selectedSlot = slot;
         if (this.selectedDate) {
-            const cachedSlots = this.slotCache.get(ymd(this.selectedDate));
-            if (cachedSlots) {
-                this.renderSlots(cachedSlots);
+            const cached = this.slotCache.get(ymd(this.selectedDate));
+            if (cached) {
+                this.renderSlots(cached.slots ?? [], cached.warning);
             }
         }
         this.updateSelection();
