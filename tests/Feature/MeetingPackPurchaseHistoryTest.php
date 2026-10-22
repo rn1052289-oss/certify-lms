@@ -27,6 +27,38 @@ class MeetingPackPurchaseHistoryTest extends TestCase
             ->assertViewHas('plans', fn ($plans) => $plans->firstWhere('id', $payment->meeting_pack_id)->payments_count === 1);
     }
 
+    public function test_admin_detail_shows_only_latest_twenty_payments_without_limiting_list_count(): void
+    {
+        $pack = MeetingPack::factory()->published()->create();
+        $student = User::factory()->student()->create(['name' => '購入履歴の受講生']);
+        $paymentIds = [];
+        $createdAt = now();
+        for ($i = 0; $i < 21; $i++) {
+            $paymentIds[] = Payment::factory()->create([
+                'meeting_pack_id' => $pack->id,
+                'user_id' => $student->id,
+                // 最新2件は同時刻にし、同時刻でも順序が安定することを確認する。
+                'created_at' => $createdAt->copy()->subMinutes(max(21 - $i, 2)),
+            ])->id;
+        }
+        $expectedIds = array_slice(array_reverse($paymentIds), 0, 20);
+
+        $this->actingAs(User::factory()->admin()->create())
+            ->get(route('admin.meeting-packs.show', $pack))
+            ->assertOk()->assertSee($student->name)
+            ->assertViewHas('plan', function (MeetingPack $plan) use ($expectedIds) {
+                $this->assertSame($expectedIds, $plan->payments->modelKeys());
+                foreach ($plan->payments as $payment) {
+                    $this->assertTrue($payment->relationLoaded('user'));
+                }
+
+                return true;
+            });
+        $this->get(route('admin.meeting-packs.index'))->assertOk()
+            ->assertViewHas('plans', fn ($plans) => $plans->firstWhere('id', $pack->id)->payments_count === 21);
+        $this->assertDatabaseCount('payments', 21);
+    }
+
     public function test_archived_pack_with_purchase_history_cannot_be_deleted_but_unused_pack_can(): void
     {
         $payment = Payment::factory()->create();
