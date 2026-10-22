@@ -1,7 +1,7 @@
 /**
  * ログイン済み実画面で evaluate_script の sourcePath から実行する回帰確認。
  * 実 DOM / app.js のイベント配線を使い、通知 API の fetch だけを一時置換する。
- * DB は更新しない。単一既読の成功遷移は別途、実操作で確認する。
+ * DB は更新しない。単一既読の成功遷移は notification-cookie-navigation.js で確認する。
  */
 async () => {
     const root = document.querySelector('[data-notification-popover-root]');
@@ -185,7 +185,32 @@ async () => {
             assert(loading.classList.contains('hidden'), '遅延応答後も読み込み中です。');
         });
 
+        await test('全件既読後の再取得中はベルを閉開しても追加取得しない', async () => {
+            await load(2);
+            markAll.click();
+            await respond(await next('POST'), { unread_count: 0 });
+            const refresh = await next();
+            const requestCount = requests.length;
+
+            trigger.click();
+            assert(trigger.getAttribute('aria-expanded') === 'false', '再取得中にベルを閉じられません。');
+            trigger.click();
+            await flush();
+
+            assert(trigger.getAttribute('aria-expanded') === 'true', '再取得中にベルを開けません。');
+            assert(requests.length === requestCount, 'ベルの再開閉で余分な GET が発生しました。');
+            assert(markAll.disabled && all.disabled && unread.disabled, '再取得中に操作ロックが解除されました。');
+            assert(!loading.classList.contains('hidden'), '再取得中の読み込み表示が消えました。');
+
+            await respond(refresh, payload(0, [notification('after-reopen', '再開閉後の既読', false)]));
+            countIs(0);
+            assert(find('row-title').textContent === '再開閉後の既読', '保留していた取得結果が表示されません。');
+            assert(!markAll.disabled && !all.disabled && !unread.disabled, '再取得完了後に操作が復帰しません。');
+            assert(loading.classList.contains('hidden'), '再取得完了後も読み込み中です。');
+        });
+
         await test('更新開始前の遅延 GET が全件既読結果を上書きしない', async () => {
+            await load(3);
             all.click();
             const old = await next();
             unread.click();
