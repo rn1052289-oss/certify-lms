@@ -22,6 +22,11 @@ return [
         'redirect_uri' => env('GOOGLE_CALENDAR_REDIRECT_URI', env('APP_URL').'/settings/google-calendar/callback'),
     ],
 
+    'stripe' => [
+        'secret' => env('STRIPE_SECRET'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+    ],
+
     'mailgun' => [
         'domain' => env('MAILGUN_DOMAIN'),
         'secret' => env('MAILGUN_SECRET'),

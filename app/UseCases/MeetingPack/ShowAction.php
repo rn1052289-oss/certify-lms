@@ -16,6 +16,8 @@ final class ShowAction
         return $plan->load([
             'createdBy',
             'updatedBy',
+            'payments' => fn ($query) => $query->latest()->orderByDesc('id')->limit(20),
+            'payments.user',
         ]);
     }
 }

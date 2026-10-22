@@ -29,6 +29,8 @@ final class DestroyAction
                 throw new MeetingPackNotDeletableException;
             }
 
+            abort_if($lockedPlan->payments()->exists(), 409, '購入履歴のある面談パックは削除できません。');
+
             $lockedPlan->delete();
         });
     }

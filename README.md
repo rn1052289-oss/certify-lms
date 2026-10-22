@@ -209,3 +209,25 @@ OAuth トークンを DB へ暗号化して保存する対応は今回の対象�
 既存の会話でも、入力不正・日次上限・APIキー未設定で送信を受け付けられない場合（422・429・503）は、小窓・全画面とも質問を入力欄へ戻します。全画面で送信中に書いた別の下書きは上書きせず、通信後に保存された502の質問・エラー履歴は従来どおり保持します。
 
 設定キャッシュを使用している場合は、変更後に `sail artisan config:clear` を実行してください。画面から新しい質問を送ると実際の Gemini API を呼び出します。
+
+### Stripe（追加面談購入）
+
+- `STRIPE_SECRET` — Stripe の検証用シークレットキーを設定します。未設定の場合は購入画面への送信を受け付けません
+- `STRIPE_WEBHOOK_SECRET` — 決済通知の署名検証に使用します。ローカルでは下記の `stripe listen` が表示する値を設定します。Dashboard に登録した通知先の値とは別です
+
+Stripe のサンドボックスと、本プロジェクト専用の Stripe CLI 設定を使用してください。
+
+```bash
+stripe login --project-name=certify-lms-verification
+stripe listen --project-name=certify-lms-verification \
+    --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired \
+    --forward-to http://localhost:8000/webhooks/stripe
+```
+
+転送先のポートはアプリの起動先に合わせます。`APP_URL` もブラウザーから開ける URL にそろえてください。設定後は `sail artisan config:clear` を実行し、起動中のアプリを再起動します。キーや署名検証用の値は Git・画面撮影・共有ログへ含めないでください。
+
+学習中の受講生は公開中の面談パックを購入できます。金額・回数は購入開始時に保存し、署名検証済みの正常完了通知を受け取った時に回数を加算します。成功画面の表示・再読込では加算せず、同じ通知を受け取っても二重加算しません。購入開始後に卒業・退会しても正常完了分は購入時の回数を加算し、利用できるかは既存の状態・認可に従います。
+
+`PaymentSeeder` は実際の Stripe 通信を行わず、完了・保留・失敗の購入履歴を用意します。実接続の確認には Stripe 側の設定とテスト決済が別途必要です。カード番号を LMS に保存しません。
+
+2026-10-22 に専用の検証 DB と Stripe Sandbox を使用し、1 回パック（JPY 3,000）の Checkout・テスト決済・署名付き Webhook の実受信、完了画面と購入履歴の再読み込みを確認しました。残面談回数は 3 → 4 回となり、取消・カード拒否では増加しませんでした。拒否後の再決済では、実受信した同じ本文・署名をローカル中継から3回送信してすべて HTTP 200、付与履歴は1件・残回数は 4 → 5 回でした。Stripe Dashboard からの再送操作と、卒業・退会後に届く実決済は未確認です（卒業・退会後の反映は自動テストで確認）。
