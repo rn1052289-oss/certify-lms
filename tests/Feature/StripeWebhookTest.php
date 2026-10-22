@@ -109,6 +109,50 @@ class StripeWebhookTest extends TestCase
         $this->assertDatabaseCount('meeting_quota_transactions', 1);
     }
 
+    public function test_paid_notification_does_not_grant_quota_until_session_is_complete(): void
+    {
+        $payment = Payment::factory()->create();
+        $before = app(MeetingQuotaService::class)->remaining($payment->user);
+        foreach (['checkout.session.completed', 'checkout.session.async_payment_succeeded'] as $type) {
+            foreach (['open', 'expired'] as $status) {
+                $this->sendEvent($this->event($payment, ['type' => $type], ['status' => $status]))->assertOk();
+                $this->assertSame(PaymentStatus::Pending, $payment->fresh()->status);
+                $this->assertNull($payment->fresh()->paid_at);
+                $this->assertNull($payment->fresh()->stripe_payment_intent_id);
+                $this->assertDatabaseCount('meeting_quota_transactions', 0);
+                $this->assertSame($before, app(MeetingQuotaService::class)->remaining($payment->user));
+            }
+        }
+
+        $this->sendEvent($this->event($payment))->assertOk();
+        $this->assertSame(PaymentStatus::Succeeded, $payment->fresh()->status);
+        $this->assertDatabaseCount('meeting_quota_transactions', 1);
+        $this->assertSame($before + $payment->quantity, app(MeetingQuotaService::class)->remaining($payment->user));
+    }
+
+    public function test_saved_intent_mismatch_is_rejected_before_and_after_payment_confirmation(): void
+    {
+        $payment = Payment::factory()->create(['stripe_payment_intent_id' => 'pi_saved']);
+        $mismatch = $this->event($payment, [], ['payment_intent' => 'pi_different']);
+        $this->sendEvent($mismatch)->assertStatus(400);
+        $this->assertSame(PaymentStatus::Pending, $payment->fresh()->status);
+        $this->assertSame('pi_saved', $payment->fresh()->stripe_payment_intent_id);
+        $this->assertNull($payment->fresh()->paid_at);
+        $this->assertDatabaseCount('meeting_quota_transactions', 0);
+
+        $this->sendEvent($this->event($payment, [], ['payment_intent' => 'pi_saved']))->assertOk();
+        $paidAt = $payment->fresh()->paid_at;
+        $this->assertNotNull($paidAt);
+        $this->sendEvent($mismatch)->assertStatus(400);
+        $this->assertSame(PaymentStatus::Succeeded, $payment->fresh()->status);
+        $this->assertSame('pi_saved', $payment->fresh()->stripe_payment_intent_id);
+        $this->assertTrue($paidAt->equalTo($payment->fresh()->paid_at));
+        $this->assertDatabaseCount('meeting_quota_transactions', 1);
+        $this->assertDatabaseHas('meeting_quota_transactions', [
+            'related_payment_id' => $payment->id, 'user_id' => $payment->user_id, 'amount' => $payment->quantity,
+        ]);
+    }
+
     public function test_expired_and_failed_events_do_not_add_quota_or_revert_succeeded_payment(): void
     {
         foreach (['checkout.session.expired', 'checkout.session.async_payment_failed'] as $type) {

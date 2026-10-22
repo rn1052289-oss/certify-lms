@@ -91,6 +91,38 @@ class MeetingQuotaCheckoutTest extends TestCase
         $this->assertDatabaseCount('meeting_quota_transactions', 0);
     }
 
+    public function test_checkout_uses_saved_price_after_pack_changes_before_sdk_call(): void
+    {
+        $pack = MeetingPack::factory()->published()->withCount(5)->withPrice(12000)
+            ->create(['name' => '購入時のパック']);
+        $payment = Payment::factory()->create([
+            'meeting_pack_id' => $pack->id,
+            'meeting_pack_name' => $pack->name,
+            'amount' => 12000,
+            'quantity' => 5,
+        ]);
+        // SDK が送信内容を組み立てる前にマスタを変更する。
+        $pack->update(['price' => 18000, 'meeting_count' => 1, 'name' => '変更後のパック']);
+
+        $client = $this->mock(ClientInterface::class);
+        ApiRequestor::setHttpClient($client);
+        $client->shouldReceive('request')->once()->andReturnUsing(function ($method, $url, $headers, $params) {
+            $priceData = $params['line_items'][0]['price_data'];
+            $this->assertSame(12000, $priceData['unit_amount']);
+            $this->assertSame('購入時のパック', $priceData['product_data']['name']);
+
+            return [json_encode(['id' => 'cs_test_snapshot', 'object' => 'checkout.session', 'url' => 'https://checkout.stripe.com/c/pay/cs_test_snapshot']), 200, []];
+        });
+
+        $session = app(StripeCheckoutService::class)->create($payment);
+
+        $this->assertSame('cs_test_snapshot', $session->id);
+        $this->assertSame(18000, $pack->fresh()->price);
+        $this->assertSame(12000, $payment->fresh()->amount);
+        $this->assertSame(5, $payment->fresh()->quantity);
+        $this->assertDatabaseCount('meeting_quota_transactions', 0);
+    }
+
     public function test_guest_coach_admin_and_non_learning_students_cannot_start_checkout(): void
     {
         $pack = MeetingPack::factory()->published()->create();
