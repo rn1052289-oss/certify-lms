@@ -9,13 +9,12 @@ use App\Enums\EnrollmentStatus;
 use App\Enums\TermType;
 use App\Enums\UserRole;
 use App\Enums\UserStatus;
-use App\Models\Certificate;
 use App\Models\Certification;
 use App\Models\Enrollment;
 use App\Models\EnrollmentStatusLog;
 use App\Models\User;
+use App\UseCases\Certificate\IssueAction;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Str;
 
 /**
  * 卒業生向けの修了証 + 過去 Enrollment 補完シーダー。
@@ -119,14 +118,6 @@ final class CertificateSeeder extends Seeder
      */
     private function issueCertificateForEnrollment(Enrollment $enrollment): void
     {
-        $issuedAt = $enrollment->passed_at ?? now();
-
-        $certificate = Certificate::factory()
-            ->forEnrollment($enrollment)
-            ->state([
-                'pdf_path' => 'certificates/'.Str::ulid().'.pdf',
-                'issued_at' => $issuedAt,
-            ])
-            ->create();
+        app(IssueAction::class)($enrollment, $enrollment->passed_at ?? now());
     }
 }

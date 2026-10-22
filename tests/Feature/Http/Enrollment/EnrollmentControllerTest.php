@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Http\Enrollment;
 
 use App\Enums\EnrollmentStatus;
+use App\Models\Certificate;
 use App\Models\Certification;
 use App\Models\Enrollment;
 use App\Models\EnrollmentGoal;
@@ -12,6 +13,7 @@ use App\Models\MockExam;
 use App\Models\MockExamSession;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -258,6 +260,8 @@ class EnrollmentControllerTest extends TestCase
 
     public function test_receive_certificate_succeeds_when_eligible(): void
     {
+        Storage::fake('private');
+
         $student = User::factory()->student()->inProgress()->create();
         $certification = Certification::factory()->published()->create();
         $enrollment = Enrollment::factory()->for($student)->for($certification)->learning()->create();
@@ -269,6 +273,11 @@ class EnrollmentControllerTest extends TestCase
         $response->assertRedirect(route('enrollments.show', $enrollment));
         $this->assertSame(EnrollmentStatus::Passed, $enrollment->fresh()->status);
         $this->assertDatabaseHas('certificates', ['enrollment_id' => $enrollment->id]);
+        $certificate = Certificate::where('enrollment_id', $enrollment->id)->sole();
+        Storage::disk('private')->assertExists($certificate->pdf_path);
+        $this->get(route('enrollments.show', $enrollment))->assertOk()
+            ->assertSee(route('certificates.download', $certificate));
+        $this->get(route('certificates.download', $certificate))->assertOk()->assertDownload();
     }
 
     public function test_receive_certificate_returns_409_when_not_eligible(): void
