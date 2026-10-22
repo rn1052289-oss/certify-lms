@@ -11,8 +11,10 @@ use App\Models\User;
 use App\Services\MeetingQuotaService;
 use Database\Seeders\PaymentSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 
+#[Group('external-api')]
 class PaymentSeederTest extends TestCase
 {
     use RefreshDatabase;

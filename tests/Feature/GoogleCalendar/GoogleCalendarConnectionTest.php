@@ -11,8 +11,10 @@ use App\Models\User;
 use App\Services\GoogleCalendarService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 
+#[Group('external-api')]
 class GoogleCalendarConnectionTest extends TestCase
 {
     use RefreshDatabase;

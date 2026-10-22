@@ -25,8 +25,10 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 
+#[Group('external-api')]
 class AiChatTest extends TestCase
 {
     use RefreshDatabase;

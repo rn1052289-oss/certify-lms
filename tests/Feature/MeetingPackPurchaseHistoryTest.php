@@ -10,9 +10,11 @@ use App\Models\Payment;
 use App\Models\User;
 use App\UseCases\MeetingQuota\CreateCheckoutAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Group;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
+#[Group('external-api')]
 class MeetingPackPurchaseHistoryTest extends TestCase
 {
     use RefreshDatabase;
