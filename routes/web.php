@@ -7,6 +7,7 @@ use App\Http\Controllers\AiChatMessageController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\Auth\OnboardingController;
 use App\Http\Controllers\BrowseController;
+use App\Http\Controllers\CertificateDownloadController;
 use App\Http\Controllers\CertificationCatalogController;
 use App\Http\Controllers\CertificationCategoryController;
 use App\Http\Controllers\CertificationCoachAssignmentController;
@@ -86,6 +87,10 @@ Route::post('/onboarding/{invitation}', [OnboardingController::class, 'store'])
 // 認証後の全ロール共通ルート
 // ============================================================
 Route::middleware('auth')->group(function () {
+    // 修了証は卒業後も本人・担当コーチ・管理者がダウンロードできる。
+    Route::get('certificates/{certificate}/download', CertificateDownloadController::class)
+        ->name('certificates.download');
+
     // ダッシュボード
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
 

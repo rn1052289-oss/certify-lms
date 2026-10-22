@@ -242,3 +242,12 @@ stripe listen --project-name=certify-lms-verification \
 `PaymentSeeder` は実際の Stripe 通信を行わず、完了・保留・失敗の購入履歴を用意します。実接続の確認には Stripe 側の設定とテスト決済が別途必要です。カード番号を LMS に保存しません。
 
 2026-10-22 に専用の検証 DB と Stripe Sandbox を使用し、1 回パック（JPY 3,000）の Checkout・テスト決済・署名付き Webhook の実受信、完了画面と購入履歴の再読み込みを確認しました。残面談回数は 3 → 4 回となり、取消・カード拒否では増加しませんでした。拒否後の再決済では、実受信した同じ本文・署名をローカル中継から3回送信してすべて HTTP 200、付与履歴は1件・残回数は 4 → 5 回でした。Stripe Dashboard からの再送操作と、卒業・退会後に届く実決済は未確認です（卒業・退会後の反映は自動テストで確認）。
+
+
+### 修了証 PDF（S-A-04）
+
+「修了証を受け取る」で新規発行した修了証は、提供済みテンプレートから日本語 PDF を生成し、`private` ディスクの `certificates/` 配下へ保存します。mPDF と同梱の日本語フォントを使うため、追加の環境変数は不要です。`storage/app/private` と `storage/framework/cache/mpdf` をアプリの実行ユーザーが書き込める状態にしてください。
+
+ダウンロード先は `GET /certificates/{certificate}/download` です。本人（卒業後を含む）・資格に現在割り当てられているコーチ・管理者だけが取得できます。公開ストレージへのリンクは作りません。
+
+`EnrollmentSeeder`・`CertificateSeeder` も新規発行時に実 PDF を生成します。既発行レコードの PDF が欠けていても、Seeder やダウンロードで補完・再発行・差し替えはしません。
