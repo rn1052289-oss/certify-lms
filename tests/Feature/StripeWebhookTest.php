@@ -17,9 +17,12 @@ use App\UseCases\User\WithdrawAction;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Testing\TestResponse;
+use PHPUnit\Framework\Attributes\Group;
 use RuntimeException;
+use Tests\Support\ExternalApi\StripeSignature;
 use Tests\TestCase;
 
+#[Group('external-api')]
 class StripeWebhookTest extends TestCase
 {
     use RefreshDatabase;
@@ -339,9 +342,7 @@ class StripeWebhookTest extends TestCase
 
     private function signature(string $payload, ?int $timestamp = null): string
     {
-        $time = $timestamp ?? time();
-
-        return 't='.$time.',v1='.hash_hmac('sha256', $time.'.'.$payload, 'whsec_local_signature_test');
+        return StripeSignature::make($payload, 'whsec_local_signature_test', $timestamp);
     }
 
     private function sendEvent(array $event): TestResponse

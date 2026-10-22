@@ -12,12 +12,14 @@ use App\Services\StripeCheckoutService;
 use App\UseCases\MeetingQuota\CreateCheckoutAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\Group;
 use Stripe\ApiRequestor;
 use Stripe\Exception\ApiConnectionException;
 use Stripe\HttpClient\ClientInterface;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
+#[Group('external-api')]
 class MeetingQuotaCheckoutTest extends TestCase
 {
     use RefreshDatabase;

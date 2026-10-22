@@ -17,10 +17,12 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 use Throwable;
 
 /** 独立した2つのHTTP処理を競合させる。他のtesting DBテスト群とは同時起動しない。 */
+#[Group('external-api')]
 class ConcurrentAiChatTest extends TestCase
 {
     use DatabaseMigrations;

@@ -12,11 +12,14 @@ use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\ExternalApi\StripeSignature;
 use Tests\TestCase;
 
 /**
  * HTTP 処理を独立した 2 プロセスで実行する。通常テスト群との同時起動は禁止。
  */
+#[Group('external-api')]
 class ConcurrentStripeWebhookTest extends TestCase
 {
     use DatabaseMigrations;
@@ -58,8 +61,7 @@ class ConcurrentStripeWebhookTest extends TestCase
                     while (! file_exists($directory.'/start') && microtime(true) < $deadline) {
                         usleep(10000);
                     }
-                    $timestamp = time();
-                    $signature = 't='.$timestamp.',v1='.hash_hmac('sha256', $timestamp.'.'.$payload, 'whsec_concurrency_local_test');
+                    $signature = StripeSignature::make($payload, 'whsec_concurrency_local_test');
                     $request = Request::create('/webhooks/stripe', 'POST', [], [], [], [
                         'HTTP_STRIPE_SIGNATURE' => $signature, 'CONTENT_TYPE' => 'application/json', 'HTTP_ACCEPT' => 'application/json',
                     ], $payload);

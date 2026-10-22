@@ -116,6 +116,17 @@ sail artisan test                  # 全テスト実行
 sail artisan test --filter=Xxx    # クラス名・メソッド名で絞り込み
 ```
 
+Google Calendar・Gemini・Stripeのモックテストは、次のグループでまとめて実行・除外できます（T-A-04）。
+
+```bash
+sail artisan test --group=external-api
+sail artisan test --exclude-group=external-api
+```
+
+テスト用のAPIキーは各テスト内のダミー値を使い、実サービスへ接続しません。Google・GeminiはLaravel HTTPのfake、利用側はカレンダー操作のスタブ、Stripe CheckoutはSDKのHTTPクライアント差し替え、Webhookは`Tests\Support\ExternalApi\StripeSignature`で作った署名を使います。
+
+`Tests\TestCase`は未fakeのLaravel HTTP通信と未mockのStripe SDK通信を止め、アプリが通信例外を捕捉してもテスト終了時に失敗させます。URL・ヘッダー・本文を通信漏れのエラーへ含めません。Geminiは既存仕様どおり自動再試行せず、一時障害後に呼出側が明示的に再送するケースを検証します。並行処理テストも含むため、同じ`testing` DBを使うテスト群を同時起動しないでください。
+
 ## コード整形
 
 Laravel Pint を使用しています。コミット前に実行してください。
