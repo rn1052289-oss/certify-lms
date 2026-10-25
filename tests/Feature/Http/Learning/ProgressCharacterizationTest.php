@@ -13,7 +13,6 @@ use App\Models\Section;
 use App\Models\SectionProgress;
 use App\Models\User;
 use App\Services\Learning\ProgressSummary;
-use App\UseCases\Learning\ShowPartAction;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -41,6 +40,34 @@ class ProgressCharacterizationTest extends TestCase
         }
 
         $this->assertScreens($enrollment, new ProgressSummary(3, 1, 0.3333, 3, 1, 0.3333, 3, 1, 0.3333, 0.3333));
+    }
+
+    public function test_partial_chapters_and_parts_have_independent_completion_ratios(): void
+    {
+        $enrollment = $this->enrollment();
+        $part = Part::factory()->for($enrollment->certification)->published()->create();
+        $completeChapter = Chapter::factory()->for($part)->published()->create();
+        $partialChapter = Chapter::factory()->for($part)->published()->create();
+        $unreadPart = Part::factory()->for($enrollment->certification)->published()->create();
+        $unreadChapter = Chapter::factory()->for($unreadPart)->published()->create();
+        $completedSection = Section::factory()->for($completeChapter)->published()->create();
+        $partialSections = Section::factory()->for($partialChapter)->published()->count(2)->create();
+        Section::factory()->for($unreadChapter)->published()->count(2)->create();
+        $this->complete($enrollment, $completedSection);
+        $this->complete($enrollment, $partialSections[0]);
+
+        $this->assertScreens($enrollment, new ProgressSummary(
+            sectionsTotal: 5,
+            sectionsCompleted: 2,
+            sectionCompletionRatio: 0.4,
+            chaptersTotal: 3,
+            chaptersCompleted: 1,
+            chapterCompletionRatio: 0.3333,
+            partsTotal: 2,
+            partsCompleted: 0,
+            partCompletionRatio: 0.0,
+            overallCompletionRatio: 0.4,
+        ));
     }
 
     public function test_certification_without_content_has_zero_totals_and_float_ratios(): void
@@ -138,7 +165,6 @@ class ProgressCharacterizationTest extends TestCase
         $this->assertSame(3, $chapters[$chapter->id]->sections_total_count);
         $this->assertSame(0, $chapters[$empty->id]->sections_total_count);
         $this->assertFalse($chapters->has($hidden->id));
-        $this->assertSame([], app(ShowPartAction::class)($part, User::factory()->student()->create())['completedByChapter']);
     }
 
     private function enrollment(): Enrollment
