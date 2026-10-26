@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Enums\EnrollmentStatus;
+use Closure;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Enrollment 集計を提供する Service。admin ダッシュボード KPI で利用される。
@@ -24,6 +27,11 @@ class EnrollmentStatsService
      * @return array{learning_count: int, passed_count: int, failed_count: int, total: int, by_certification: array<int, array{certification_id: string, certification_name: string, learning: int, passed: int, failed: int, total: int}>}
      */
     public function adminKpi(): array
+    {
+        return $this->cached(config('dashboard.admin_kpi_cache_key'), fn (): array => $this->calculateAdminKpi());
+    }
+
+    private function calculateAdminKpi(): array
     {
         $counts = DB::table('enrollments')
             ->whereNull('deleted_at')
@@ -77,6 +85,11 @@ class EnrollmentStatsService
      */
     public function completionRateByCertification(): Collection
     {
+        return $this->cached(config('dashboard.admin_completion_rate_cache_key'), fn (): Collection => $this->calculateCompletionRates());
+    }
+
+    private function calculateCompletionRates(): Collection
+    {
         return collect($this->byCertification())
             ->filter(fn (array $row): bool => $row['total'] > 0)
             ->map(function (array $row): array {
@@ -86,6 +99,36 @@ class EnrollmentStatsService
             })
             ->sortByDesc('total')
             ->values();
+    }
+
+    /** 状態変更が確定してから両集計を無効化する。rollback 時は既存キャッシュを保持する。 */
+    public function invalidateAfterCommit(): void
+    {
+        DB::afterCommit(function (): void {
+            // 世代を先に切り替え、変更前に開始した集計の遅延書込も次回読取で除外する。
+            Cache::forever('enrollment-stats:admin:generation', (string) Str::uuid());
+            Cache::forget(config('dashboard.admin_kpi_cache_key'));
+            Cache::forget(config('dashboard.admin_completion_rate_cache_key'));
+        });
+    }
+
+    private function cached(string $key, Closure $calculate): mixed
+    {
+        // 未コミットの集計を共有キャッシュへ保存しない。
+        if (DB::transactionLevel() > 0) {
+            return $calculate();
+        }
+
+        $generation = Cache::get('enrollment-stats:admin:generation', 'initial');
+        $cached = Cache::get($key);
+        if (is_array($cached) && ($cached['generation'] ?? null) === $generation) {
+            return $cached['value'];
+        }
+
+        $value = $calculate();
+        Cache::put($key, ['generation' => $generation, 'value' => $value], (int) config('dashboard.admin_cache_ttl'));
+
+        return $value;
     }
 
     /**

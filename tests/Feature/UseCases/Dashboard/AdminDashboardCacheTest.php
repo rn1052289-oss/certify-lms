@@ -8,22 +8,28 @@ use App\Enums\EnrollmentStatus;
 use App\Models\Certification;
 use App\Models\Enrollment;
 use App\Models\User;
+use App\Services\EnrollmentStatsService;
 use App\Services\EnrollmentStatusChangeService;
 use App\UseCases\Dashboard\FetchAdminDashboardAction;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use App\UseCases\Enrollment\DestroyAction;
+use App\UseCases\Enrollment\FailAction;
+use App\UseCases\Enrollment\ResumeAction;
+use App\UseCases\Enrollment\StoreAction;
+use App\UseCases\User\WithdrawAction;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
  * 管理者ダッシュボード集計のキャッシュ挙動を検証する Feature テスト。
- * 全体 KPI と資格別修了率の 2 キーそれぞれについて、連続表示で集計が Cache::remember から
+ * 全体 KPI と資格別修了率の 2 キーそれぞれについて、連続表示で集計が保存済みキャッシュから
  * 再利用されること(重い集計を再実行しない)と、受講状態の遷移(EnrollmentStatusChangeService)で
  * 両キーが無効化され最新値に更新されること(片方の forget 漏れも検出する)を網羅する。
  */
 class AdminDashboardCacheTest extends TestCase
 {
-    use RefreshDatabase;
+    use DatabaseMigrations;
 
     public function test_admin_kpi_is_served_from_cache_on_second_fetch(): void
     {
@@ -156,5 +162,142 @@ class AdminDashboardCacheTest extends TestCase
             $afterRate,
             '状態遷移後は修了率キャッシュも無効化され、最新の修了率(1/2)が返るはず',
         );
+    }
+
+    public function test_configured_ttl_refreshes_both_aggregates_and_non_status_changes(): void
+    {
+        config(['dashboard.admin_cache_ttl' => 10]);
+        $cert = Certification::factory()->published()->create(['name' => 'Before']);
+        Enrollment::factory()->for($cert)->learning()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $first = $stats->adminKpi();
+        $stats->completionRateByCertification();
+        $cert->update(['name' => 'After']);
+        Enrollment::factory()->for($cert)->passed()->create();
+
+        $this->travel(9)->seconds();
+        $this->assertSame($first, $stats->adminKpi());
+        $this->assertSame(0.0, $stats->completionRateByCertification()->first()['completion_rate']);
+        $this->travel(2)->seconds();
+        $this->assertSame(2, $stats->adminKpi()['total']);
+        $this->assertSame('After', $stats->adminKpi()['by_certification'][0]['certification_name']);
+        $this->assertSame(0.5, $stats->completionRateByCertification()->first()['completion_rate']);
+    }
+
+    public function test_zero_ttl_does_not_persist_aggregates(): void
+    {
+        config(['dashboard.admin_cache_ttl' => 0]);
+        $cert = Certification::factory()->published()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $this->assertSame(0, $stats->adminKpi()['total']);
+        $this->assertEmpty($stats->completionRateByCertification());
+        Enrollment::factory()->for($cert)->passed()->create();
+        $this->assertSame(1, $stats->adminKpi()['total']);
+        $this->assertSame(1.0, $stats->completionRateByCertification()->first()['completion_rate']);
+    }
+
+    public function test_registration_failure_resume_and_removal_invalidate_both_aggregates(): void
+    {
+        $admin = User::factory()->admin()->inProgress()->create();
+        $student = User::factory()->student()->inProgress()->create();
+        $cert = Certification::factory()->published()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $stats->adminKpi();
+        $stats->completionRateByCertification();
+
+        $enrollment = app(StoreAction::class)($student, ['certification_id' => $cert->id]);
+        $this->assertSame(1, $stats->adminKpi()['learning_count']);
+        $this->assertSame(1, $stats->completionRateByCertification()->first()['learning']);
+        app(FailAction::class)($enrollment, $admin, null);
+        $this->assertSame(1, $stats->adminKpi()['failed_count']);
+        $this->assertSame(1, $stats->completionRateByCertification()->first()['failed']);
+        app(ResumeAction::class)($enrollment, $student);
+        $this->assertSame(1, $stats->adminKpi()['learning_count']);
+        $this->assertSame(1, $stats->completionRateByCertification()->first()['learning']);
+        app(DestroyAction::class)($enrollment);
+        $this->assertSame(0, $stats->adminKpi()['total']);
+        $this->assertEmpty($stats->completionRateByCertification());
+    }
+
+    public function test_expiration_and_withdrawal_invalidate_both_aggregates_without_changing_count_rules(): void
+    {
+        $admin = User::factory()->admin()->inProgress()->create();
+        $enrollment = Enrollment::factory()->learning()->create(['exam_date' => now()->subDay()]);
+        $stats = app(EnrollmentStatsService::class);
+        $stats->adminKpi();
+        $stats->completionRateByCertification();
+        $this->artisan('enrollments:fail-expired')->assertSuccessful();
+        $this->assertSame(1, $stats->adminKpi()['failed_count']);
+        $this->assertSame(1, $stats->completionRateByCertification()->first()['failed']);
+
+        app(WithdrawAction::class)($enrollment->user, $admin);
+        $this->assertFalse(Cache::has(config('dashboard.admin_kpi_cache_key')));
+        $this->assertFalse(Cache::has(config('dashboard.admin_completion_rate_cache_key')));
+        // 現行の集計は User ではなく Enrollment の削除状態で判定する。
+        $this->assertSame(1, $stats->adminKpi()['failed_count']);
+        $this->assertSame(1, $stats->completionRateByCertification()->first()['failed']);
+    }
+
+    public function test_outer_rollback_keeps_cache_and_does_not_publish_uncommitted_aggregates(): void
+    {
+        $enrollment = Enrollment::factory()->learning()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $before = $stats->adminKpi();
+        $rates = $stats->completionRateByCertification()->all();
+        $cached = Cache::get(config('dashboard.admin_kpi_cache_key'));
+
+        DB::beginTransaction();
+        DB::transaction(function () use ($enrollment): void {
+            $enrollment->update(['status' => EnrollmentStatus::Passed]);
+            app(EnrollmentStatusChangeService::class)->recordStatusChange($enrollment, EnrollmentStatus::Learning, EnrollmentStatus::Passed, null);
+        });
+        $this->assertSame($cached, Cache::get(config('dashboard.admin_kpi_cache_key')));
+        $this->assertSame(1, $stats->adminKpi()['passed_count']);
+        $this->assertSame(1.0, $stats->completionRateByCertification()->first()['completion_rate']);
+        $this->assertSame($cached, Cache::get(config('dashboard.admin_kpi_cache_key')));
+        DB::rollBack();
+        $this->assertSame($before, $stats->adminKpi());
+        $this->assertSame($rates, $stats->completionRateByCertification()->all());
+    }
+
+    public function test_outer_commit_invalidates_only_after_commit(): void
+    {
+        $enrollment = Enrollment::factory()->learning()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $stats->adminKpi();
+        $stats->completionRateByCertification();
+        DB::beginTransaction();
+        DB::transaction(function () use ($enrollment): void {
+            $enrollment->update(['status' => EnrollmentStatus::Passed]);
+            app(EnrollmentStatusChangeService::class)->recordStatusChange($enrollment, EnrollmentStatus::Learning, EnrollmentStatus::Passed, null);
+        });
+        $this->assertTrue(Cache::has(config('dashboard.admin_kpi_cache_key')));
+        $this->assertTrue(Cache::has(config('dashboard.admin_completion_rate_cache_key')));
+        DB::commit();
+        $this->assertFalse(Cache::has(config('dashboard.admin_kpi_cache_key')));
+        $this->assertFalse(Cache::has(config('dashboard.admin_completion_rate_cache_key')));
+        $this->assertSame(1, $stats->adminKpi()['passed_count']);
+        $this->assertSame(1.0, $stats->completionRateByCertification()->first()['completion_rate']);
+    }
+
+    public function test_invalidation_during_aggregation_rejects_late_stale_fill(): void
+    {
+        $enrollment = Enrollment::factory()->learning()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $changed = false;
+        DB::listen(function ($query) use ($enrollment, &$changed): void {
+            if ($changed || ! str_starts_with($query->sql, 'select status, COUNT(*)')) {
+                return;
+            }
+            // 集計SQL完了とキャッシュ保存の間に別の状態変更が確定する順序を再現。
+            $changed = true;
+            $enrollment->update(['status' => EnrollmentStatus::Passed]);
+            app(EnrollmentStatusChangeService::class)->recordStatusChange($enrollment, EnrollmentStatus::Learning, EnrollmentStatus::Passed, null);
+        });
+        $this->assertSame(1, $stats->adminKpi()['learning_count']);
+        $this->assertTrue($changed);
+        $this->assertSame(0, $stats->adminKpi()['learning_count']);
+        $this->assertSame(1, $stats->adminKpi()['passed_count']);
+        $this->assertSame(1.0, $stats->completionRateByCertification()->first()['completion_rate']);
     }
 }
