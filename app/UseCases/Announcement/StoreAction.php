@@ -44,7 +44,14 @@ final class StoreAction
                 ['announcement_id', 'user_id', 'notification_id'],
                 $recipients->selectRaw('? AS announcement_id, users.id AS user_id, UUID() AS notification_id', [$announcement->id])->toBase(),
             );
-            DB::afterCommit(fn () => DispatchAnnouncement::dispatch($announcement->id));
+            DB::afterCommit(function () use ($announcement): void {
+                try {
+                    DispatchAnnouncement::dispatch($announcement->id);
+                } catch (\Throwable $exception) {
+                    // 受付と対象者は保存済み。再開コマンドで同じ受付を投入できる。
+                    report($exception);
+                }
+            });
 
             return ['announcement' => $announcement];
         });

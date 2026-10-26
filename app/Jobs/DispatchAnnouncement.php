@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Models\Announcement;
+use App\Models\NotificationDelivery;
 use App\Models\User;
 use App\Notifications\AdminAnnouncementNotification;
+use App\Services\NotificationDeliveryService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
@@ -44,14 +46,28 @@ final class DispatchAnnouncement implements ShouldBeEncrypted, ShouldQueueAfterC
                     if (! isset($users[$row->user_id])) {
                         continue;
                     }
-                    $notification = new AdminAnnouncementNotification($announcement);
-                    $notification->id = $row->notification_id;
-                    $users[$row->user_id]->notify($notification);
+                    foreach (['database', 'mail'] as $channel) {
+                        $id = app(NotificationDeliveryService::class)->plan(
+                            $row->notification_id, $users[$row->user_id], $channel,
+                            ['announcement_id' => $announcement->id],
+                        );
+                        $delivery = NotificationDelivery::query()->findOrFail($id);
+                        if ($delivery->queued_at !== null || $delivery->sent_at !== null) {
+                            continue;
+                        }
+                        $notification = new AdminAnnouncementNotification($announcement, [$channel]);
+                        $notification->id = $row->notification_id;
+                        $users[$row->user_id]->notify($notification);
+                        $delivery->update(['queued_at' => now()]);
+                    }
                 }
             }, 'user_id');
 
-        if (! DB::table('announcement_recipients')->where('announcement_id', $announcement->id)->exists()) {
-            $announcement->update(['dispatched_at' => now()]);
-        }
+        app(NotificationDeliveryService::class)->refreshAnnouncement($announcement->id);
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        app(NotificationDeliveryService::class)->failUnqueuedAnnouncementDeliveries($this->announcementId);
     }
 }

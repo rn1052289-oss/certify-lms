@@ -16,7 +16,10 @@ class AdminAnnouncementNotification extends Notification implements ShouldBeEncr
 {
     use QueuesNotification;
 
-    public function __construct(private readonly Announcement $announcement) {}
+    public function __construct(
+        private readonly Announcement $announcement,
+        private readonly ?array $channels = null,
+    ) {}
 
     protected function deliveryMetadata(): array
     {
@@ -25,7 +28,7 @@ class AdminAnnouncementNotification extends Notification implements ShouldBeEncr
 
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        return $this->channels ?? ['database', 'mail'];
     }
 
     public function toDatabase(object $notifiable): array

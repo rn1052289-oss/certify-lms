@@ -30,43 +30,75 @@ final class NotificationDeliveryService
             MeetingReminderDelivery::query()->whereKey($delivery->reminder_delivery_id)
                 ->update([$delivery->channel === 'database' ? 'database_sent_at' : 'mail_sent_at' => now()]);
         }
-
-        $this->refreshAnnouncement($delivery->announcement_id);
     }
 
     public function failed(int $id, ?string $announcementId = null): void
     {
-        DB::transaction(function () use ($id, $announcementId): void {
-            if ($announcementId !== null) {
-                Announcement::query()->lockForUpdate()->findOrFail($announcementId);
-            }
+        $announcementId = DB::transaction(function () use ($id, $announcementId): ?string {
             $delivery = NotificationDelivery::query()->lockForUpdate()->find($id);
             if ($delivery === null || $delivery->sent_at !== null) {
-                return;
+                return $announcementId;
             }
             $delivery->update(['failed_at' => now()]);
-            $this->refreshAnnouncement($delivery->announcement_id);
+
+            return $delivery->announcement_id;
         });
+        $this->refreshAnnouncement($announcementId);
     }
 
-    private function refreshAnnouncement(?string $id): void
+    /** 展開ジョブが上限回数に達したとき、キューへ渡せなかったチャネルだけを最終失敗にする。 */
+    public function failUnqueuedAnnouncementDeliveries(string $id): void
+    {
+        DB::table('announcement_recipients')->where('announcement_id', $id)
+            ->orderBy('user_id')->chunkById(100, function ($rows) use ($id): void {
+                DB::transaction(function () use ($rows, $id): void {
+                    $records = [];
+                    foreach ($rows as $row) {
+                        foreach (['database', 'mail'] as $channel) {
+                            $records[] = [
+                                'notification_id' => $row->notification_id,
+                                'user_id' => $row->user_id,
+                                'channel' => $channel,
+                                'announcement_id' => $id,
+                                'created_at' => now(), 'updated_at' => now(),
+                            ];
+                        }
+                    }
+                    NotificationDelivery::query()->insertOrIgnore($records);
+                    NotificationDelivery::query()->where('announcement_id', $id)
+                        ->whereIn('notification_id', $rows->pluck('notification_id'))
+                        ->whereNull('queued_at')->whereNull('sent_at')->whereNull('failed_at')
+                        ->update(['failed_at' => now()]);
+                });
+            }, 'user_id');
+        $this->refreshAnnouncement($id);
+    }
+
+    /** 配信のトランザクションが終わってから、お知らせの集計だけを直列化する。 */
+    public function refreshAnnouncement(?string $id): void
     {
         if ($id === null) {
             return;
         }
 
-        $announcement = Announcement::query()->lockForUpdate()->findOrFail($id);
-        $deliveries = NotificationDelivery::query()->where('announcement_id', $id);
-        $failedUserIds = (clone $deliveries)->whereNotNull('failed_at')->whereNull('sent_at')
-            ->distinct()->orderBy('user_id')->pluck('user_id')->all();
-        $expected = DB::table('announcement_recipients')->where('announcement_id', $id)->count() * 2;
-        $finished = (clone $deliveries)->where(fn ($query) => $query->whereNotNull('sent_at')->orWhereNotNull('failed_at'))->count();
+        DB::transaction(function () use ($id): void {
+            $announcement = Announcement::query()->lockForUpdate()->findOrFail($id);
+            $deliveries = NotificationDelivery::query()->where('announcement_id', $id);
+            $failedUserIds = (clone $deliveries)->whereNotNull('failed_at')->whereNull('sent_at')
+                ->distinct()->orderBy('user_id')->pluck('user_id')->all();
+            $expected = DB::table('announcement_recipients')->where('announcement_id', $id)->count() * 2;
+            $finished = (clone $deliveries)->where(fn ($query) => $query->whereNotNull('sent_at')->orWhereNotNull('failed_at'))->count();
+            $dispatchedCount = (clone $deliveries)->where('channel', 'database')->whereNotNull('sent_at')->count();
+            $resultsChanged = $announcement->dispatched_count !== $dispatchedCount
+                || $announcement->failed_user_ids !== $failedUserIds;
 
-        $announcement->update([
-            'dispatched_count' => (clone $deliveries)->where('channel', 'database')->whereNotNull('sent_at')->count(),
-            'failed_count' => count($failedUserIds),
-            'failed_user_ids' => $failedUserIds,
-            'dispatched_at' => $finished === $expected ? now() : null,
-        ]);
+            $announcement->update([
+                'dispatched_count' => $dispatchedCount,
+                'failed_count' => count($failedUserIds),
+                'failed_user_ids' => $failedUserIds,
+                'dispatched_at' => $finished === $expected
+                    ? ($resultsChanged ? now() : ($announcement->dispatched_at ?? now())) : null,
+            ]);
+        });
     }
 }

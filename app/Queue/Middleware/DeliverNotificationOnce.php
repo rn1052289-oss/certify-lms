@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Queue\Middleware;
 
-use App\Models\Announcement;
 use App\Models\NotificationDelivery;
 use App\Services\NotificationDeliveryService;
 use Closure;
@@ -20,11 +19,7 @@ final class DeliverNotificationOnce
 
     public function handle(object $job, Closure $next): mixed
     {
-        return DB::transaction(function () use ($job, $next): mixed {
-            // 同じお知らせの結果更新を直列化し、集計前の古いスナップショットを避ける。
-            if ($this->announcementId !== null) {
-                Announcement::query()->lockForUpdate()->findOrFail($this->announcementId);
-            }
+        $result = DB::transaction(function () use ($job, $next): mixed {
             $delivery = NotificationDelivery::query()->lockForUpdate()->find($this->deliveryId);
             if ($delivery === null || $delivery->sent_at !== null) {
                 return null;
@@ -41,5 +36,8 @@ final class DeliverNotificationOnce
 
             return $result;
         });
+        app(NotificationDeliveryService::class)->refreshAnnouncement($this->announcementId);
+
+        return $result;
     }
 }
