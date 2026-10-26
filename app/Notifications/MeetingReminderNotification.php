@@ -4,20 +4,46 @@ declare(strict_types=1);
 
 namespace App\Notifications;
 
+use App\Enums\MeetingStatus;
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Models\Meeting;
+use App\Notifications\Concerns\QueuesNotification;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class MeetingReminderNotification extends Notification
+class MeetingReminderNotification extends Notification implements ShouldBeEncrypted, ShouldQueueAfterCommit
 {
+    use QueuesNotification;
+
     public function __construct(
         private readonly Meeting $meeting,
         private readonly string $window,
+        private readonly ?string $deliveryId = null,
+        private readonly ?array $channels = null,
     ) {}
 
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        return $this->channels ?? ['database', 'mail'];
+    }
+
+    protected function deliveryMetadata(): array
+    {
+        return ['reminder_delivery_id' => $this->deliveryId];
+    }
+
+    public function shouldSend(object $notifiable, string $channel): bool
+    {
+        $meeting = $this->meeting->fresh();
+        $role = $notifiable->id === $meeting?->student_id ? UserRole::Student : UserRole::Coach;
+
+        return $meeting !== null && $meeting->status === MeetingStatus::Reserved
+            && $meeting->scheduled_at->gt(now())
+            && $meeting->scheduled_at->lte(now()->addHours($this->window === 'eve' ? 24 : 1))
+            && $notifiable->role === $role && $notifiable->status === UserStatus::InProgress;
     }
 
     public function toDatabase(object $notifiable): array

@@ -251,3 +251,45 @@ stripe listen --project-name=certify-lms-verification \
 ダウンロード先は `GET /certificates/{certificate}/download` です。本人（卒業後を含む）・資格に現在割り当てられているコーチ・管理者だけが取得できます。公開ストレージへのリンクは作りません。
 
 `EnrollmentSeeder`・`CertificateSeeder` も新規発行時に実 PDF を生成します。既発行レコードの PDF が欠けていても、Seeder やダウンロードで補完・再発行・差し替えはしません。
+
+## 通知・メールのキュー運用（T-A-05）
+
+チャット、Q&A返信、面談の予約・取消・リマインダー、お知らせ、招待・再招待、パスワード再設定は、database queueで処理します。通知内容・宛先・アプリ内／メールのチャネルは維持します。お知らせは受付時に「配信を受け付けました」と表示し、件数・最終失敗件数・配信日時はworkerの結果を記録します。投入時点では送信済みになりません。
+
+### 起動と更新
+
+`.env.example` の `QUEUE_CONNECTION=database` を自分の開発・実行環境にも設定してください。既存の実設定ファイルは自動変更しません。設定キャッシュを使っている場合は更新後にクリアします。
+
+```bash
+sail artisan migrate
+sail artisan config:clear
+sail artisan queue:work database --queue=notifications,default --sleep=1 --tries=3 --timeout=45
+```
+
+workerはHTTPサーバーと別プロセスです。開発中も起動したままにしてください。サーバー運用ではプロセス管理ツールで同じコマンドを監視・再起動します。コード更新後は `sail artisan queue:restart` でworkerを再読み込みしてください。定期リマインダーの既存スケジュール自体は変更していません。
+
+通知・招待メールは最大3回試行し、失敗後は30秒、120秒と待って再試行します。ジョブのtimeoutは45秒、database queueの `retry_after` は90秒です。timeoutをretry_afterより短く保ち、SMTPやHTTP transportにも45秒未満の接続・応答timeoutを設定してください。workerの強制終了だけでは、外部サーバーが受信したメールを取り消せません。
+
+### 失敗と再投入
+
+```bash
+sail artisan queue:failed
+sail artisan queue:retry <失敗ジョブのUUID>
+sail artisan queue:work database --queue=notifications,default --stop-when-empty --timeout=45
+```
+
+再試行中の一時失敗は、お知らせの最終失敗件数に含めません。上限到達後は `failed_jobs` に残り、お知らせには失敗した受講生の件数・IDを記録します。再投入で成功すると当該失敗を解消し、既に成功したアプリ内通知やメールを再送・二重集計しません。リマインダーのコマンド出力は送信済件数ではなく投入受付件数です。配信結果は `meeting_reminder_deliveries` と `notification_deliveries` で確認します。
+
+通知はチャネル別に成功を記録します。workerがSMTP成功応答を受けた直後、DBへ成功記録を残す前に異常終了した場合は、メールが届いたかをDBだけで確定できません。この場合はメールサーバーの配信ログを照合してから再投入してください。SMTPには受信とDB更新を一括コミットする仕組みがないため、この障害境界でのメールの厳密な一度だけの配信は保証しません。
+
+招待メールはworker実行時にも期限・失効状態を確認し、再招待で失効した旧リンクや期限切れリンクを送りません。パスワード再設定も有効なトークンだけを送ります。トークン等を含むキュージョブは暗号化し、既存の署名付きURLの有効期限・宛先・本文を維持します。workerとWebプロセスは同じAPP_KEYを使用し、保留中ジョブがある状態でキーを変更しないでください。`jobs` / `failed_jobs` は運用者のみが閲覧できるようにし、payloadやメールのリンクをログ・証跡へ貼り付けないでください。
+
+### ローカルでの動作確認
+
+既存のデモデータを用意した専用検証DBで、次のSeederを実行します。実ユーザーや実SMTPを使わず、Mailpit等のローカル受信箱を使ってください。
+
+```bash
+sail artisan db:seed --class=NotificationQueueVerificationSeeder
+```
+
+`queue-reset@certify-lms.test` の架空アカウントを用意します。worker停止中に管理者お知らせ、架空コーチの招待・再招待、検証アカウントのパスワード再設定を受け付け、メール未送信・履歴0件・配信日時未確定を確認します。その後workerを起動して件数・受信箱を確認します。別の専用環境でSMTPを接続不能にして一時失敗、3回で最終失敗、復旧後の `queue:retry` を検証してください。実設定ファイルや既存プロジェクトのworkerは変更しません。

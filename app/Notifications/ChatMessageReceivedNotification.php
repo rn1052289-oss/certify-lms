@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Notifications;
 
 use App\Models\ChatMessage;
+use App\Notifications\Concerns\QueuesNotification;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -14,8 +17,10 @@ use Illuminate\Notifications\Notification;
  * アプリ内通知とメールの両方で送信する。
  * 通知先の選定は呼び出し元で行う。
  */
-class ChatMessageReceivedNotification extends Notification
+class ChatMessageReceivedNotification extends Notification implements ShouldBeEncrypted, ShouldQueueAfterCommit
 {
+    use QueuesNotification;
+
     public function __construct(
         private readonly ChatMessage $message,
     ) {}

@@ -153,7 +153,7 @@ final class IssueInvitationAction
                 'status' => InvitationStatus::Pending->value,
             ]);
 
-            Mail::send(new InvitationMail($invitation));
+            DB::afterCommit(fn () => Mail::send(new InvitationMail($invitation)));
 
             return $invitation;
         });

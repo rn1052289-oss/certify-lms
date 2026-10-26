@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Notifications;
 
 use App\Models\Meeting;
+use App\Notifications\Concerns\QueuesNotification;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -15,8 +18,10 @@ use Illuminate\Notifications\Notification;
  * アプリ内通知とメールを送信する。
  * 通知先の選定は呼び出し元で行う。
  */
-class MeetingReservedNotification extends Notification
+class MeetingReservedNotification extends Notification implements ShouldBeEncrypted, ShouldQueueAfterCommit
 {
+    use QueuesNotification;
+
     public function __construct(
         private readonly Meeting $meeting,
     ) {}

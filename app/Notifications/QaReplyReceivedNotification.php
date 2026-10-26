@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Notifications;
 
 use App\Models\QaReply;
+use App\Notifications\Concerns\QueuesNotification;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -14,8 +17,10 @@ use Illuminate\Notifications\Notification;
  * 質問者へアプリ内通知とメールを送信する。
  * 投稿者本人への通知除外は呼び出し元で行う。
  */
-class QaReplyReceivedNotification extends Notification
+class QaReplyReceivedNotification extends Notification implements ShouldBeEncrypted, ShouldQueueAfterCommit
 {
+    use QueuesNotification;
+
     public function __construct(
         private readonly QaReply $reply,
     ) {}
