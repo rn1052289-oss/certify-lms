@@ -5,20 +5,29 @@ declare(strict_types=1);
 namespace Tests\Feature\UseCases\Dashboard;
 
 use App\Enums\EnrollmentStatus;
+use App\Models\Certificate;
 use App\Models\Certification;
 use App\Models\Enrollment;
+use App\Models\MockExam;
+use App\Models\MockExamSession;
 use App\Models\User;
+use App\Services\CertificatePdfService;
 use App\Services\EnrollmentStatsService;
 use App\Services\EnrollmentStatusChangeService;
 use App\UseCases\Dashboard\FetchAdminDashboardAction;
 use App\UseCases\Enrollment\DestroyAction;
 use App\UseCases\Enrollment\FailAction;
+use App\UseCases\Enrollment\ReceiveCertificateAction;
 use App\UseCases\Enrollment\ResumeAction;
 use App\UseCases\Enrollment\StoreAction;
 use App\UseCases\User\WithdrawAction;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 /**
@@ -299,5 +308,147 @@ class AdminDashboardCacheTest extends TestCase
         $this->assertSame(0, $stats->adminKpi()['learning_count']);
         $this->assertSame(1, $stats->adminKpi()['passed_count']);
         $this->assertSame(1.0, $stats->completionRateByCertification()->first()['completion_rate']);
+    }
+
+    public function test_disabling_cache_bypasses_existing_cached_values(): void
+    {
+        $cert = Certification::factory()->published()->create();
+        Enrollment::factory()->for($cert)->learning()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $stats->adminKpi();
+        $stats->completionRateByCertification();
+        config(['dashboard.admin_cache_ttl' => 0]);
+        Enrollment::factory()->for($cert)->passed()->create();
+        $this->assertSame(2, $stats->adminKpi()['total']);
+        $this->assertSame(0.5, $stats->completionRateByCertification()->first()['completion_rate']);
+    }
+
+    public function test_cache_read_failure_preserves_dashboard_aggregates(): void
+    {
+        $admin = User::factory()->admin()->inProgress()->create();
+        Enrollment::factory()->passed()->create();
+        $cache = \Mockery::mock(Cache::store());
+        $cache->shouldReceive('get')->andThrow(new \RuntimeException('cache read unavailable'));
+        Cache::swap($cache);
+        $vm = app(FetchAdminDashboardAction::class)($admin);
+        $this->assertNotNull($vm->kpi);
+        $this->assertSame(1, $vm->kpi['passed_count']);
+        $this->assertSame(1.0, $vm->completionRateByCertification->first()['completion_rate']);
+    }
+
+    public function test_cache_write_failure_preserves_dashboard_aggregates(): void
+    {
+        $admin = User::factory()->admin()->inProgress()->create();
+        Enrollment::factory()->passed()->create();
+        $cache = \Mockery::mock(Cache::store());
+        $cache->shouldReceive('put')->andThrow(new \RuntimeException('cache write unavailable'));
+        Cache::swap($cache);
+        $vm = app(FetchAdminDashboardAction::class)($admin);
+        $this->assertNotNull($vm->kpi);
+        $this->assertSame(1, $vm->kpi['passed_count']);
+        $this->assertSame(1.0, $vm->completionRateByCertification->first()['completion_rate']);
+    }
+
+    public function test_cache_invalidation_failure_does_not_delete_committed_certificate_pdf(): void
+    {
+        Storage::fake('private');
+        $enrollment = Enrollment::factory()->learning()->create();
+        $exam = MockExam::factory()->for($enrollment->certification)->create(['is_published' => true]);
+        MockExamSession::factory()->for($enrollment)->for($exam)->create(['pass' => true]);
+        $this->mock(CertificatePdfService::class)->shouldReceive('generate')->once()->andReturn('%PDF-test');
+        $stats = app(EnrollmentStatsService::class);
+        $stats->adminKpi();
+        $stats->completionRateByCertification();
+        $cache = \Mockery::mock(Cache::store());
+        $cache->shouldReceive('forever')->once()->andThrow(new \RuntimeException('cache invalidation unavailable'));
+        Cache::swap($cache);
+
+        $error = null;
+        try {
+            app(ReceiveCertificateAction::class)($enrollment);
+        } catch (\Throwable $e) {
+            $error = $e;
+        }
+
+        $this->assertSame(EnrollmentStatus::Passed, $enrollment->refresh()->status);
+        $this->assertDatabaseCount('certificates', 1);
+        $certificate = Certificate::query()->sole();
+        Storage::disk('private')->assertExists($certificate->pdf_path);
+        $this->assertNull($error, 'cache例外を確定済みの修了処理へ伝播させない');
+        // 世代書込の失敗後も両集計の削除は試みる。
+        $this->assertFalse(Cache::has(config('dashboard.admin_kpi_cache_key')));
+        $this->assertFalse(Cache::has(config('dashboard.admin_completion_rate_cache_key')));
+        $this->assertSame(1, $stats->adminKpi()['passed_count']);
+        $this->assertSame(1.0, $stats->completionRateByCertification()->first()['completion_rate']);
+    }
+
+    public function test_failed_cache_deletions_still_reject_previous_generation(): void
+    {
+        $admin = User::factory()->admin()->inProgress()->create();
+        $enrollment = Enrollment::factory()->learning()->create();
+        $stats = app(EnrollmentStatsService::class);
+        $stats->adminKpi();
+        $stats->completionRateByCertification();
+        $cache = \Mockery::mock(Cache::store());
+        $cache->shouldReceive('forget')->twice()->andThrow(new \RuntimeException('cache delete unavailable'));
+        Cache::swap($cache);
+        app(FailAction::class)($enrollment, $admin, null);
+        $this->assertSame(1, $stats->adminKpi()['failed_count']);
+        $this->assertSame(1, $stats->completionRateByCertification()->first()['failed']);
+    }
+
+    public function test_file_cache_rejects_stale_fills_from_another_process(): void
+    {
+        $enrollment = Enrollment::factory()->learning()->create();
+        $barrier = sys_get_temp_dir().'/admin-stats-'.Str::uuid();
+        File::makeDirectory($barrier);
+        config(['cache.default' => 'file', 'cache.stores.file.path' => $barrier.'/cache']);
+        Cache::purge('file');
+        $stats = app(EnrollmentStatsService::class);
+        $process = null;
+
+        try {
+            foreach (['adminKpi', 'completionRateByCertification'] as $method) {
+                $enrollment->update(['status' => EnrollmentStatus::Learning]);
+                $stats->invalidateAfterCommit();
+                $process = new Process([
+                    PHP_BINARY, base_path('tests/Support/fetch_admin_stats.php'), $barrier, $method,
+                ], base_path(), [
+                    'APP_ENV' => 'testing',
+                    'DB_DATABASE' => DB::connection()->getDatabaseName(),
+                    'CACHE_DRIVER' => 'file',
+                    'MAIL_MAILER' => 'array',
+                ]);
+                $process->setTimeout(20);
+                $process->start();
+                $deadline = microtime(true) + 10;
+                while (! file_exists($barrier.'/ready')) {
+                    if (! $process->isRunning() || microtime(true) > $deadline) {
+                        $this->fail('集計プロセスの同期待ち失敗: '.$process->getErrorOutput().$process->getOutput());
+                    }
+                    usleep(10000);
+                }
+
+                DB::transaction(function () use ($enrollment): void {
+                    $enrollment->update(['status' => EnrollmentStatus::Passed]);
+                    app(EnrollmentStatusChangeService::class)->recordStatusChange($enrollment, EnrollmentStatus::Learning, EnrollmentStatus::Passed, null);
+                });
+                touch($barrier.'/release');
+                $process->wait();
+                $this->assertTrue($process->isSuccessful(), $process->getErrorOutput().$process->getOutput());
+                $old = json_decode($process->getOutput(), true, flags: JSON_THROW_ON_ERROR);
+                $this->assertSame(0, $old['passed']);
+                $this->assertSame(1, $stats->adminKpi()['passed_count']);
+                $this->assertSame(1.0, $stats->completionRateByCertification()->first()['completion_rate']);
+                unlink($barrier.'/ready');
+                unlink($barrier.'/release');
+            }
+        } finally {
+            if ($process?->isRunning()) {
+                $process->stop();
+            }
+            Cache::purge('file');
+            File::deleteDirectory($barrier);
+        }
     }
 }
