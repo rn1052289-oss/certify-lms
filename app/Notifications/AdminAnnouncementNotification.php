@@ -7,19 +7,21 @@ namespace App\Notifications;
 use App\Models\Announcement;
 use App\Notifications\Concerns\QueuesNotification;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
-use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Str;
 
-class AdminAnnouncementNotification extends Notification implements ShouldBeEncrypted, ShouldQueueAfterCommit
+class AdminAnnouncementNotification extends Notification implements ShouldBeEncrypted, ShouldQueue
 {
     use QueuesNotification;
 
     public function __construct(
         private readonly Announcement $announcement,
         private readonly ?array $channels = null,
-    ) {}
+    ) {
+        $this->afterCommit();
+    }
 
     protected function deliveryMetadata(): array
     {

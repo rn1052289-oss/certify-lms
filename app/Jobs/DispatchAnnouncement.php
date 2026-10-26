@@ -51,14 +51,18 @@ final class DispatchAnnouncement implements ShouldBeEncrypted, ShouldQueueAfterC
                             $row->notification_id, $users[$row->user_id], $channel,
                             ['announcement_id' => $announcement->id],
                         );
-                        $delivery = NotificationDelivery::query()->findOrFail($id);
-                        if ($delivery->queued_at !== null || $delivery->sent_at !== null) {
-                            continue;
-                        }
-                        $notification = new AdminAnnouncementNotification($announcement, [$channel]);
-                        $notification->id = $row->notification_id;
-                        $users[$row->user_id]->notify($notification);
-                        $delivery->update(['queued_at' => now()]);
+                        DB::transaction(function () use ($id, $announcement, $channel, $row, $users): void {
+                            $delivery = NotificationDelivery::query()->lockForUpdate()->findOrFail($id);
+                            if ($delivery->queued_at !== null || $delivery->sent_at !== null) {
+                                return;
+                            }
+                            $notification = new AdminAnnouncementNotification($announcement, [$channel]);
+                            $notification->id = $row->notification_id;
+                            // 受付はコミット済み。ジョブ保存と投入済み記録を、このトランザクションで一緒に確定する。
+                            $notification->beforeCommit();
+                            $users[$row->user_id]->notify($notification);
+                            $delivery->update(['queued_at' => now()]);
+                        });
                     }
                 }
             }, 'user_id');
