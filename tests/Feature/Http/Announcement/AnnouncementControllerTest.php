@@ -14,8 +14,10 @@ use App\Models\User;
 use App\Notifications\AdminAnnouncementNotification;
 use Database\Seeders\AnnouncementSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Tests\Support\Mail\FailingTransport;
 use Tests\TestCase;
 
 class AnnouncementControllerTest extends TestCase
@@ -185,11 +187,18 @@ class AnnouncementControllerTest extends TestCase
 
     public function test_email_failure_keeps_history_and_database_notifications_and_continues_delivery(): void
     {
+        config(['queue.default' => 'database']);
         $admin = User::factory()->admin()->inProgress()->create();
         User::factory()->student()->inProgress()->count(2)->create();
-        Mail::shouldReceive('mailer')->twice()->andThrow(new \RuntimeException('mail unavailable'));
+        Mail::extend('queue_failing', fn () => new FailingTransport);
+        config(['mail.default' => 'queue_failing', 'mail.mailers.queue_failing' => ['transport' => 'queue_failing']]);
 
-        $this->actingAs($admin)->post('/admin/announcements', $this->payload())->assertSessionHas('error');
+        $this->actingAs($admin)->post('/admin/announcements', $this->payload())
+            ->assertSessionHas('success', '配信を受け付けました');
+        $this->assertSame(0, Announcement::query()->sole()->failed_count);
+        $this->artisan('queue:work database --queue=notifications --memory=512 --once --sleep=0')->assertSuccessful();
+        DB::table('jobs')->update(['attempts' => 2]);
+        $this->artisan('queue:work database --queue=notifications --memory=512 --stop-when-empty --sleep=0')->assertSuccessful();
 
         $this->assertSame(2, Announcement::query()->sole()->dispatched_count);
         $announcement = Announcement::query()->sole();

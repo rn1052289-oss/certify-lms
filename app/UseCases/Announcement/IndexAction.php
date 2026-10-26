@@ -13,7 +13,7 @@ final class IndexAction
     {
         return Announcement::query()
             ->with(['targetCertification', 'targetUser', 'createdBy'])
-            ->orderByDesc('dispatched_at')
+            ->orderByRaw('COALESCE(dispatched_at, created_at) DESC')
             ->orderByDesc('id')
             ->paginate(20);
     }

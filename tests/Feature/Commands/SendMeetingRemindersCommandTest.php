@@ -14,6 +14,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Tests\Support\Mail\FailingTransport;
 use Tests\TestCase;
 
 class SendMeetingRemindersCommandTest extends TestCase
@@ -132,21 +133,27 @@ class SendMeetingRemindersCommandTest extends TestCase
 
     public function test_failed_mail_is_retried_without_duplicating_database_notification(): void
     {
+        config(['queue.default' => 'database']);
         $meeting = Meeting::factory()->create(['scheduled_at' => now()->addDay()]);
-        $mailer = Mail::mailer();
-        Mail::shouldReceive('mailer')->twice()->andThrow(new \RuntimeException('mail unavailable'));
+        Mail::extend('queue_failing', fn () => new FailingTransport);
+        config(['mail.default' => 'queue_failing', 'mail.mailers.queue_failing' => ['transport' => 'queue_failing']]);
 
-        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertFailed();
+        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
+        $this->assertDatabaseCount('notifications', 0);
+        $this->artisan('queue:work database --queue=notifications --memory=512 --stop-when-empty --sleep=0')->assertSuccessful();
         $this->assertDatabaseCount('notifications', 2);
         $this->assertSame(2, MeetingReminderDelivery::query()->whereNotNull('database_sent_at')->whereNull('mail_sent_at')->count());
 
-        Mail::shouldReceive('mailer')->twice()->andReturn($mailer);
+        config(['mail.default' => 'array']);
+        Mail::purge('meeting_reminders');
         $this->travel(1)->minutes();
         $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
+        $this->assertDatabaseCount('jobs', 2);
+        $this->artisan('queue:work database --queue=notifications --memory=512 --stop-when-empty --sleep=0')->assertSuccessful();
 
         $this->assertDatabaseCount('notifications', 2);
         $this->assertSame(2, MeetingReminderDelivery::query()->whereNotNull('mail_sent_at')->count());
-        $this->assertSame(2, $mailer->getSymfonyTransport()->messages()->count());
+        $this->assertSame(2, Mail::mailer('meeting_reminders')->getSymfonyTransport()->messages()->count());
         $this->assertSame(1, $meeting->student->notifications()->count());
     }
 
@@ -157,7 +164,7 @@ class SendMeetingRemindersCommandTest extends TestCase
 
         $result = app(SendReminderAction::class)($meeting, 'eve', now());
 
-        $this->assertSame(['sent' => 0, 'failed' => 0], $result);
+        $this->assertSame(['queued' => 0, 'failed' => 0], $result);
         $this->assertDatabaseCount('notifications', 0);
     }
 

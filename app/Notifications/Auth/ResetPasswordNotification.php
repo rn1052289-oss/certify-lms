@@ -4,11 +4,22 @@ declare(strict_types=1);
 
 namespace App\Notifications\Auth;
 
+use App\Notifications\Concerns\QueuesNotification;
 use Illuminate\Auth\Notifications\ResetPassword as BaseResetPassword;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Support\Facades\Password;
 
-class ResetPasswordNotification extends BaseResetPassword
+class ResetPasswordNotification extends BaseResetPassword implements ShouldBeEncrypted, ShouldQueueAfterCommit
 {
+    use QueuesNotification;
+
+    public function shouldSend(object $notifiable, string $channel): bool
+    {
+        return Password::broker()->tokenExists($notifiable, $this->token);
+    }
+
     public function toMail($notifiable): MailMessage
     {
         $url = url(route('password.reset', [
