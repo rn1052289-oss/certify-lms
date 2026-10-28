@@ -19,6 +19,8 @@ services:
             IGNITION_LOCAL_SITES_PATH: '${PWD}'
         volumes:
             - '.:/var/www/html'
+            - './docker/supervisord.conf:/etc/supervisor/conf.d/supervisord.conf:ro'
+        stop_grace_period: 75s
         networks:
             - sail
         depends_on:
