@@ -217,7 +217,7 @@ OAuth トークンを DB へ暗号化して保存する対応は今回の対象�
 
 教材を削除した場合は会話の `section_id` だけを NULL にし、会話・メッセージ・日次利用回数を残します。既存のAI相談テーブルにも反映するため、外部キーだけを変更する追加migrationを用意しています。更新時は `sail artisan migrate` を実行してください。
 
-既存の会話でも、入力不正・日次上限・APIキー未設定で送信を受け付けられない場合（422・429・503）は、小窓・全画面とも質問を入力欄へ戻します。全画面で送信中に書いた別の下書きは上書きせず、通信後に保存された502の質問・エラー履歴は従来どおり保持します。
+既存の会話でも、別タブでAIが応答中・入力不正・日次上限・APIキー未設定で送信を受け付けられない場合（409・422・429・503）は、小窓・全画面とも質問を入力欄へ戻します。409では応答完了後の送信を案内します。全画面で送信中に書いた別の下書きは上書きせず、通信後に保存された502の質問・エラー履歴は従来どおり保持します。
 
 設定キャッシュを使用している場合は、変更後に `sail artisan config:clear` を実行してください。画面から新しい質問を送ると実際の Gemini API を呼び出します。
 
@@ -263,10 +263,12 @@ stripe listen --project-name=certify-lms-verification \
 ```bash
 sail artisan migrate
 sail artisan config:clear
-sail artisan queue:work database --queue=notifications,default --sleep=1 --tries=3 --timeout=45
+sail up -d --force-recreate laravel.test
 ```
 
-workerはHTTPサーバーと別プロセスです。開発中も起動したままにしてください。サーバー運用ではプロセス管理ツールで同じコマンドを監視・再起動します。コード更新後は `sail artisan queue:restart` でworkerを再読み込みしてください。定期リマインダーの既存スケジュール自体は変更していません。
+ローカルのSail環境では、`docker/supervisord.conf` をコンテナへ読み込み、HTTPサーバーと別プロセスのworkerを一緒に起動します。workerは既存の `notifications,default` の両キューを処理し、通知・メールなどのDBキュージョブを実行します。終了時はSupervisorが再起動するため、手動の `queue:work` を重ねて起動する必要はありません。初回の設定反映には上記のコンテナ再作成が必要です。停止時は処理中のジョブを終了できるよう、workerの待機上限を60秒、コンテナの停止猶予を75秒にしています。
+
+コードや接続設定の更新後は `sail artisan queue:restart` でworkerを再読み込みしてください。workerは現在のジョブを終えて終了し、Supervisorが起動し直します。ローカルSail以外のサーバー運用では、別途プロセス管理ツールで `php artisan queue:work database --queue=notifications,default --sleep=1 --tries=3 --timeout=45` を監視・再起動してください。定期リマインダーの既存スケジュール自体は変更していません。
 
 通知・招待メールは最大3回試行し、失敗後は30秒、120秒と待って再試行します。ジョブのtimeoutは45秒、database queueの `retry_after` は90秒です。timeoutをretry_afterより短く保ち、SMTPやHTTP transportにも45秒未満の接続・応答timeoutを設定してください。workerの強制終了だけでは、外部サーバーが受信したメールを取り消せません。
 
@@ -275,8 +277,9 @@ workerはHTTPサーバーと別プロセスです。開発中も起動したま�
 ```bash
 sail artisan queue:failed
 sail artisan queue:retry <失敗ジョブのUUID>
-sail artisan queue:work database --queue=notifications,default --stop-when-empty --timeout=45
 ```
+
+ローカルSailでは再投入したジョブも常駐workerが処理します。常駐workerを用意していない環境でのみ、別途 `sail artisan queue:work database --queue=notifications,default --stop-when-empty --timeout=45` を実行してください。
 
 再試行中の一時失敗は、お知らせの最終失敗件数に含めません。上限到達後は `failed_jobs` に残り、お知らせには失敗した受講生の件数・IDを記録します。再投入で成功すると当該失敗を解消し、既に成功したアプリ内通知やメールを再送・二重集計しません。リマインダーのコマンド出力は送信済件数ではなく投入受付件数です。配信結果は `meeting_reminder_deliveries` と `notification_deliveries` で確認します。
 

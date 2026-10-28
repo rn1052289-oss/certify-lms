@@ -274,7 +274,7 @@ test('送信後の履歴取得中に新規を押しても、遅い同一会話�
     assert.ok(!app.elements['[data-ai-chat-messages]'].innerHTML.includes('戻してはいけない履歴'));
 });
 
-for (const status of [422, 429, 503, 502]) {
+for (const status of [409, 422, 429, 503, 502]) {
     test(`既存会話${status}では未受付の質問だけ入力欄へ戻す`, async () => {
         const app = await widget({ ok: true, json: async () => history() }, 'unused', null, '', {
             ok: false, status, json: async () => ({ upstream_status: 503 }),
@@ -287,6 +287,9 @@ for (const status of [422, 429, 503, 502]) {
         assert.equal(input.value, status === 502 ? '' : '再送できる質問');
         assert.equal(input.disabled, false);
         assert.equal(app.stored.get(conversationKey), 'old-conversation');
+        if (status === 409) {
+            assert.ok(app.elements['[data-ai-chat-messages]'].innerHTML.includes('AI が応答中です。完了後に送信してください。'));
+        }
     });
 }
 

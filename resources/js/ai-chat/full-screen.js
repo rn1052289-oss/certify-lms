@@ -115,7 +115,7 @@ function initForm() {
         },
         onError: (err) => {
             clearTyping();
-            if ([422, 429, 503].includes(err.status) && textarea.value === '') {
+            if ([409, 422, 429, 503].includes(err.status) && textarea.value === '') {
                 textarea.value = submittedContent;
                 autoResize();
             }
@@ -172,6 +172,7 @@ function initForm() {
 }
 
 function describeError(err) {
+    if (err.status === 409) return 'AI が応答中です。完了後に送信してください。';
     if (err.status === 503) return 'AI 相談は現在利用できません。管理者にお問い合わせください。';
     if (err.type === 'rate-limit') return '本日の利用上限に達しました。明日 0:00 以降に再度ご利用ください。';
     if (err.type === 'validation') return '入力内容を確認してください (1-2000 文字)。';

@@ -41,7 +41,7 @@ async function screen(response) {
     return { input, submit, list, send: () => form.handlers.get('submit')({ preventDefault() {} }) };
 }
 
-for (const status of [422, 429, 503, 502]) {
+for (const status of [409, 422, 429, 503, 502]) {
     test(`全画面${status}では未受付の質問だけ入力欄へ戻す`, async () => {
         const app = await screen(() => ({ ok: false, status, json: async () => ({ upstream_status: 503 }) }));
         app.input.value = '失わず再送する質問';
@@ -49,6 +49,9 @@ for (const status of [422, 429, 503, 502]) {
         assert.equal(app.input.value, status === 502 ? '' : '失わず再送する質問');
         assert.equal(app.submit.disabled, false);
         assert.ok(app.list.output.some((message) => message.content === '失わず再送する質問'));
+        if (status === 409) {
+            assert.ok(app.list.output.some((message) => message.content === 'AI が応答中です。完了後に送信してください。'));
+        }
     });
 }
 
