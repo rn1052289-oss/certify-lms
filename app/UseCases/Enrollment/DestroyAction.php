@@ -9,6 +9,7 @@ use App\Exceptions\Enrollment\EnrollmentInvalidTransitionException;
 use App\Models\Enrollment;
 use App\Models\EnrollmentGoal;
 use App\Services\DefaultEnrollmentService;
+use App\Services\EnrollmentStatsService;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -22,6 +23,7 @@ final class DestroyAction
 {
     public function __construct(
         private readonly DefaultEnrollmentService $defaultEnrollmentService,
+        private readonly EnrollmentStatsService $stats,
     ) {}
 
     /**
@@ -41,6 +43,7 @@ final class DestroyAction
                 ->delete();
 
             $enrollment->delete();
+            $this->stats->invalidateAfterCommit();
 
             $this->defaultEnrollmentService->resolveAfterStatusChange($user, $enrollment);
         });
