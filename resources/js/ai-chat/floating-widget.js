@@ -15,8 +15,7 @@ import { renderMarkdown } from './markdown.js';
 
 const STORAGE_OPEN = 'certify.aichat.widget.open';
 const STORAGE_CONV = 'certify.aichat.current_conversation_id';
-// 教材を切り替えた時に古い会話を引きずらないため、保存時の section_id を併せて保持し、
-// 現在の section と一致しない場合は currentConversationId をリセットする
+// 別教材では会話を切り替える。教材以外への移動では保存中の教材会話を継続する。
 const STORAGE_CONV_SECTION = 'certify.aichat.current_conversation_section_id';
 
 function csrfToken() {
@@ -34,10 +33,13 @@ export function initAiChatWidget() {
     const input = widget.querySelector('[data-ai-chat-widget-input]');
     const sendBtn = widget.querySelector('[data-ai-chat-widget-send]');
     const messagesEl = widget.querySelector('[data-ai-chat-messages]');
+    const contextLabel = widget.querySelector('[data-ai-chat-context]');
+    const initialContextLabel = contextLabel?.textContent;
 
     if (!fab || !panel || !messagesEl) return;
 
     const sectionId = widget.dataset.sectionId || null;
+    let historySectionId = sectionId;
     const storeUrl = widget.dataset.storeUrl;
     const fullscreenBase = widget.dataset.fullscreenBaseUrl;
 
@@ -55,8 +57,9 @@ export function initAiChatWidget() {
         const savedSectionId = sessionStorage.getItem(STORAGE_CONV_SECTION);
         // section が一致しても、資格は履歴 API の現在の受講登録 ID と照合してから再利用する。
         // 全般相談の section は常に空なので、ここだけで文脈の一致を判断しない。
-        if (savedConvId && savedSectionId === (sectionId ?? '')) {
+        if (savedConvId && (!sectionId || savedSectionId === sectionId)) {
             currentConversationId = savedConvId;
+            historySectionId = savedSectionId || null;
         } else {
             sessionStorage.removeItem(STORAGE_CONV);
             sessionStorage.removeItem(STORAGE_CONV_SECTION);
@@ -174,6 +177,8 @@ export function initAiChatWidget() {
 
     function clearConversation() {
         currentConversationId = null;
+        historySectionId = sectionId;
+        if (contextLabel) contextLabel.textContent = initialContextLabel;
         try {
             sessionStorage.removeItem(STORAGE_CONV);
             sessionStorage.removeItem(STORAGE_CONV_SECTION);
@@ -187,7 +192,7 @@ export function initAiChatWidget() {
     async function loadConversationHistory(convId, version, replace = false) {
         try {
             const query = new URLSearchParams({ source: 'widget' });
-            if (sectionId) query.set('section_id', sectionId);
+            if (historySectionId) query.set('section_id', historySectionId);
             const res = await fetch(`/ai-chat/conversations/${convId}?${query}`, {
                 headers: {
                     Accept: 'application/json',
@@ -208,11 +213,14 @@ export function initAiChatWidget() {
             // 資格名は同名になり得るため、表示文字を比較しない。
             if (!data?.widget_context || !data?.conversation
                 || (data.conversation.enrollment_id ?? null) !== data.widget_context.enrollment_id
-                || (data.conversation.section_id ?? null) !== (sectionId ?? null)
-                || data.widget_context.section_id !== (sectionId ?? null)) {
+                || (data.conversation.section_id ?? null) !== historySectionId
+                || data.widget_context.section_id !== historySectionId) {
                 clearConversation();
 
                 return;
+            }
+            if (!sectionId && historySectionId && contextLabel) {
+                contextLabel.textContent = '前の教材の相談（継続中）';
             }
             const messages = Array.isArray(data.messages) ? data.messages : [];
             if (messages.length === 0) return;
