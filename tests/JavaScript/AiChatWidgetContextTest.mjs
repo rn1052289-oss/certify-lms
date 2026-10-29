@@ -30,13 +30,14 @@ function node() {
     };
 }
 
-async function widget(response, createdId = 'new-conversation', creationResponse = null, sectionId = '', messageResponse = null) {
-    const elements = Object.fromEntries(['fab', 'panel', 'close', 'fullscreen', 'widget-input', 'widget-send', 'messages', 'new']
+async function widget(response, createdId = 'new-conversation', creationResponse = null, sectionId = '', messageResponse = null, savedSectionId = sectionId) {
+    const elements = Object.fromEntries(['fab', 'panel', 'close', 'fullscreen', 'widget-input', 'widget-send', 'messages', 'new', 'context']
         .map((key) => [`[data-ai-chat-${key}]`, node()]));
+    elements['[data-ai-chat-context]'].textContent = '全般相談';
     const root = node();
     root.dataset = { storeUrl: '/ai-chat/conversations', fullscreenBaseUrl: '/ai-chat/conversations', sectionId };
     root.querySelector = (key) => elements[key] ?? null;
-    const stored = new Map([[conversationKey, 'old-conversation'], [sectionKey, sectionId]]);
+    const stored = new Map([[conversationKey, 'old-conversation'], [sectionKey, savedSectionId]]);
     const requests = [];
     const sends = [];
     const context = vm.createContext({
@@ -78,6 +79,60 @@ function history(enrollmentId = 'first-enrollment') {
 async function settle() {
     for (let i = 0; i < 12; i++) await Promise.resolve();
 }
+
+test('教材から別ページへ移っても保存中の教材会話を復元して続ける', async () => {
+    const data = history();
+    data.conversation.section_id = 'previous-section';
+    data.widget_context.section_id = 'previous-section';
+    const app = await widget({ ok: true, json: async () => data }, undefined, null, '', null, 'previous-section');
+    await settle();
+    assert.equal(app.requests[0]?.url, '/ai-chat/conversations/old-conversation?source=widget&section_id=previous-section');
+    assert.ok(app.elements['[data-ai-chat-messages]'].innerHTML.includes('以前の資格の履歴'));
+    assert.equal(app.elements['[data-ai-chat-context]'].textContent, '前の教材の相談（継続中）');
+    app.elements['[data-ai-chat-widget-input]'].value = 'ページ移動後の続き';
+    await app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+    await settle();
+    assert.equal(app.sends[0]?.url, '/ai-chat/conversations/old-conversation/messages');
+    assert.equal(app.stored.get(sectionKey), 'previous-section');
+    await app.elements['[data-ai-chat-fullscreen]'].handlers.get('click')();
+    assert.equal(app.context.window.location.href, '/ai-chat/conversations/old-conversation');
+});
+
+test('教材外で新しい相談を選ぶと前の教材の紐付けを引き継がない', async () => {
+    const data = history();
+    data.conversation.section_id = 'previous-section';
+    data.widget_context.section_id = 'previous-section';
+    const app = await widget({ ok: true, json: async () => data }, undefined, null, '', null, 'previous-section');
+    await settle();
+    app.elements['[data-ai-chat-new]'].handlers.get('click')();
+    assert.equal(app.elements['[data-ai-chat-context]'].textContent, '全般相談');
+    app.elements['[data-ai-chat-widget-input]'].value = '新たな全般相談';
+    app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+    await settle();
+    const create = app.requests.find((request) => request.options?.method === 'POST');
+    assert.equal(JSON.parse(create.options.body).section_id, undefined);
+    assert.equal(app.stored.get(sectionKey), '');
+});
+
+test('保存した教材が閲覧不可になった場合は会話を復元しない', async () => {
+    const app = await widget({ ok: false, status: 404 }, undefined, null, '', null, 'previous-section');
+    await settle();
+    assert.equal(app.stored.has(conversationKey), false);
+    assert.equal(app.stored.has(sectionKey), false);
+    assert.equal(app.elements['[data-ai-chat-messages]'].innerHTML, '');
+});
+
+test('別教材へ移った場合は以前の教材会話へ送信しない', async () => {
+    const app = await widget({ ok: true, json: async () => history() }, undefined, null, 'next-section', null, 'previous-section');
+    await settle();
+    assert.equal(app.requests.length, 0);
+    app.elements['[data-ai-chat-widget-input]'].value = '別教材の質問';
+    await app.elements['[data-ai-chat-widget-send]'].handlers.get('click')();
+    await settle();
+    assert.equal(app.sends.length, 0);
+    const create = app.requests.find((request) => request.options?.method === 'POST');
+    assert.equal(JSON.parse(create.options.body).section_id, 'next-section');
+});
 
 test('資格切替後は履歴確認が完了するまで送信せず、新しい会話へ送る', async () => {
     const pending = deferred();
