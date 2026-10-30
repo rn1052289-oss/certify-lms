@@ -272,6 +272,24 @@ class OnboardingTest extends TestCase
         ]);
     }
 
+    public function test_store_json_request_with_mismatched_password_returns_422(): void
+    {
+        $invitation = $this->freshInvitation();
+
+        $response = $this->postJson($this->postUrl($invitation), [
+            'name' => '受講太郎',
+            'password' => 'secret-pass',
+            'password_confirmation' => 'different-pass',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('password');
+        $this->assertGuest();
+        $this->assertDatabaseHas('users', [
+            'id' => $invitation->user_id,
+            'status' => UserStatus::Invited->value,
+        ]);
+    }
+
     public function test_store_requires_meeting_url_for_coach_invitation(): void
     {
         $invitation = $this->freshInvitation(role: UserRole::Coach);

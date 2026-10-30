@@ -221,6 +221,28 @@ class QaThreadControllerTest extends TestCase
         ]);
     }
 
+    public function test_update_accepts_title_with_200_characters_and_body_with_5000_characters(): void
+    {
+        $author = User::factory()->student()->inProgress()->create();
+        $certification = Certification::factory()->published()->create();
+        $thread = $this->createThread($author, $certification);
+        $title = str_repeat('あ', 200);
+        $body = str_repeat('い', 5000);
+
+        $response = $this->actingAs($author)->patch(route('qa-board.update', $thread), [
+            'title' => $title,
+            'body' => $body,
+        ]);
+
+        $response->assertSessionHasNoErrors();
+        $response->assertRedirect(route('qa-board.show', $thread));
+        $this->assertDatabaseHas('qa_threads', [
+            'id' => $thread->id,
+            'title' => $title,
+            'body' => $body,
+        ]);
+    }
+
     public function test_other_student_cannot_edit_or_update_question(): void
     {
         $author = User::factory()->student()->inProgress()->create();
@@ -324,6 +346,35 @@ class QaThreadControllerTest extends TestCase
         $student = User::factory()->student()->graduated()->create();
 
         $this->actingAs($student)->get(route('qa-board.index'))->assertStatus(403);
+    }
+
+    public function test_guest_is_redirected_to_login_from_question_board(): void
+    {
+        $author = User::factory()->student()->inProgress()->create();
+        $thread = $this->createThread($author, Certification::factory()->published()->create());
+
+        $this->get(route('qa-board.index'))->assertRedirect(route('login'));
+        $this->get(route('qa-board.show', $thread))->assertRedirect(route('login'));
+        $this->post(route('qa-board.store'), ['title' => 'ゲスト', 'body' => 'ゲスト'])->assertRedirect(route('login'));
+        $this->assertDatabaseCount('qa_threads', 1);
+    }
+
+    public function test_index_accepts_keyword_with_100_characters(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+        $certification = Certification::factory()->published()->create();
+        $keyword = str_repeat('あ', 100);
+        $thread = QaThread::factory()->create([
+            'user_id' => $student->id,
+            'certification_id' => $certification->id,
+            'title' => $keyword,
+        ]);
+
+        $response = $this->actingAs($student)->get(route('qa-board.index', ['keyword' => $keyword]));
+
+        $response->assertStatus(200);
+        $response->assertSessionHasNoErrors();
+        $response->assertSee($thread->title);
     }
 
     public function test_index_rejects_invalid_filters(): void

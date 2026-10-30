@@ -118,6 +118,37 @@ class ChatUnreadCountServiceTest extends TestCase
         $this->assertSame(0, $counts[$roomB->id]);
     }
 
+    public function test_only_own_messages_after_last_read_count_as_zero_in_sidebar_and_room_list(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+        $coach = User::factory()->coach()->inProgress()->create();
+        $enrollment = Enrollment::factory()->for($student)->create();
+        $room = ChatRoom::factory()->for($enrollment)->create();
+
+        ChatMessage::factory()->create([
+            'chat_room_id' => $room->id,
+            'sender_user_id' => $coach->id,
+            'created_at' => now()->subHours(2),
+        ]);
+        ChatMember::factory()->create([
+            'chat_room_id' => $room->id,
+            'user_id' => $student->id,
+            'last_read_at' => now()->subHour(),
+        ]);
+        ChatMessage::factory()->count(2)->create([
+            'chat_room_id' => $room->id,
+            'sender_user_id' => $student->id,
+            'created_at' => now(),
+        ]);
+
+        $service = app(ChatUnreadCountService::class);
+
+        // サイドバーのバッジ（未読のある部屋数）
+        $this->assertSame(0, $service->roomCountForUser($student));
+        // 部屋一覧の件数
+        $this->assertSame([$room->id => 0], $service->messageCountsByRoomForUser(collect([$room]), $student));
+    }
+
     public function test_message_counts_by_room_returns_zero_for_non_member_room(): void
     {
         $student = User::factory()->student()->inProgress()->create();

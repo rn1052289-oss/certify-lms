@@ -31,12 +31,25 @@ class AutoCompleteMeetingsCommandTest extends TestCase
             'scheduled_at' => $base->copy()->addHours(2),
         ]);
 
-        $this->artisan('meetings:auto-complete')->assertExitCode(0);
+        $this->artisan('meetings:auto-complete')
+            ->expectsOutput('自動完了した面談を 3 件処理しました。')
+            ->assertExitCode(0);
 
         $completedCount = Meeting::where('status', MeetingStatus::Completed->value)->count();
         $reservedCount = Meeting::where('status', MeetingStatus::Reserved->value)->count();
 
         $this->assertSame(3, $completedCount);
         $this->assertSame(1, $reservedCount);
+    }
+
+    public function test_command_reports_zero_when_no_meeting_is_overdue(): void
+    {
+        Meeting::factory()->reserved()->create(['scheduled_at' => now()->subMinutes(59)]);
+
+        $this->artisan('meetings:auto-complete')
+            ->expectsOutput('自動完了した面談を 0 件処理しました。')
+            ->assertExitCode(0);
+
+        $this->assertSame(1, Meeting::where('status', MeetingStatus::Reserved->value)->count());
     }
 }

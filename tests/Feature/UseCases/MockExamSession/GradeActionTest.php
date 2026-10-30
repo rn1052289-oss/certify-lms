@@ -174,6 +174,33 @@ class GradeActionTest extends TestCase
         $this->assertFalse($pastSession->fresh()->pass);
     }
 
+    public function test_grades_zero_correct_out_of_five_as_zero_percent(): void
+    {
+        $mockExam = MockExam::factory()->published()->passingScore(60)->create();
+        $questions = collect();
+        for ($i = 0; $i < 5; $i++) {
+            $questions->push(MockExamQuestion::factory()->forMockExam($mockExam)->withOptions(4, 0)->create(['order' => $i]));
+        }
+        $session = MockExamSession::factory()->forMockExam($mockExam)->inProgress()->create([
+            'generated_question_ids' => $questions->pluck('id')->all(),
+            'total_questions' => 5,
+            'passing_score_snapshot' => 60,
+        ]);
+        foreach ($questions as $question) {
+            MockExamAnswer::factory()->create([
+                'mock_exam_session_id' => $session->id,
+                'mock_exam_question_id' => $question->id,
+                'selected_option_id' => $question->options->firstWhere('is_correct', false)->id,
+            ]);
+        }
+
+        (app(GradeAction::class))($session);
+
+        // 5問中0問正解は 0.00（百分率・小数第2位）で不合格
+        $this->assertSame('0.00', $session->fresh()->score_percentage);
+        $this->assertFalse($session->fresh()->pass);
+    }
+
     public function test_grades_zero_questions_without_division_by_zero(): void
     {
         $session = MockExamSession::factory()->inProgress()->create([

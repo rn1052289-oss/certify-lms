@@ -87,6 +87,24 @@ class SendMeetingRemindersCommandTest extends TestCase
         $this->assertDatabaseCount('notifications', 2);
     }
 
+    public function test_meetings_already_past_each_boundary_are_still_reminded_before_start(): void
+    {
+        $eveTarget = Meeting::factory()->create(['scheduled_at' => now()->addHours(23)]);
+        $oneHourTarget = Meeting::factory()->create(['scheduled_at' => now()->addMinutes(30)]);
+
+        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
+        $this->artisan('notifications:send-meeting-reminders --window=one_hour_before')->assertSuccessful();
+
+        $windows = MeetingReminderDelivery::query()->get(['meeting_id', 'window'])
+            ->groupBy('window')->map(fn ($rows) => $rows->pluck('meeting_id')->unique()->sort()->values()->all());
+        // 前日の境界（24時間前）を過ぎてから予約された面談にも、開始前なら前日リマインダーを送る。
+        $this->assertSame(collect([$eveTarget->id, $oneHourTarget->id])->sort()->values()->all(), $windows['eve']);
+        // 1時間前の境界を過ぎた30分前の面談にも、1時間前リマインダーを送る。
+        $this->assertSame([$oneHourTarget->id], $windows['one_hour_before']);
+        $this->assertSame(1, $eveTarget->student->notifications()->count());
+        $this->assertSame(2, $oneHourTarget->student->notifications()->count());
+    }
+
     public function test_inactive_participants_are_excluded_without_excluding_other_party(): void
     {
         foreach ([UserStatus::Invited, UserStatus::Graduated, UserStatus::Withdrawn] as $status) {
