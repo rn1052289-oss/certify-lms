@@ -12,7 +12,7 @@ function node() {
     return {
         value: '', style: {}, dataset: {}, handlers: new Map(), output: [],
         addEventListener(name, callback) { this.handlers.set(name, callback); },
-        querySelector() { return null; }, appendChild(value) { this.output.push(value); }, remove() {},
+        querySelector() { return null; }, appendChild(value) { this.output.push(value); }, remove() { this.removed = true; },
     };
 }
 
@@ -24,10 +24,18 @@ async function screen(response) {
     form.querySelector = (selector) => selector === '[data-ai-chat-textarea]' ? input : submit;
     const list = node();
     const scroller = node();
-    const elements = { '[data-ai-chat-form]': form, '[data-message-list]': list, '[data-message-scroller]': scroller };
+    const template = { content: { firstElementChild: { cloneNode: node } } };
+    const elements = {
+        '[data-ai-chat-form]': form, '[data-message-list]': list, '[data-message-scroller]': scroller,
+        '[data-ai-chat-message-template]': template,
+    };
+    const requests = [];
     const context = vm.createContext({
         document: { querySelector: (selector) => elements[selector] ?? null, getElementById() { return null; } },
-        fetch: async () => response(),
+        fetch: async (_url, options) => {
+            requests.push(JSON.parse(options.body).content);
+            return response();
+        },
     });
     const module = new vm.SourceTextModule(source, { context });
     await module.link(async (specifier) => {
@@ -36,9 +44,10 @@ async function screen(response) {
             this.setExport('renderFullScreenMessage', (_list, message) => list.output.push(message));
         }, { context });
     });
+    form.requestSubmit = () => form.handlers.get('submit')({ preventDefault() {} });
     await module.evaluate();
     module.namespace.initAiChatFullScreen();
-    return { input, submit, list, send: () => form.handlers.get('submit')({ preventDefault() {} }) };
+    return { input, submit, list, requests, send: form.requestSubmit };
 }
 
 for (const status of [409, 422, 429, 503, 502]) {
@@ -65,4 +74,52 @@ test('全画面の受付拒否で送信中に書いた新しい下書きを上�
     resolve({ ok: false, status: 429 });
     await sending;
     assert.equal(app.input.value, '新しい下書き');
+});
+
+for (const trigger of ['submit', 'metaKey', 'ctrlKey']) {
+    test(`応答待ち中の${trigger}再送を防ぎ、下書きと考え中表示を保持する`, async () => {
+        let resolve;
+        const pending = new Promise((done) => { resolve = done; });
+        let first = true;
+        const ok = { ok: true, status: 200, json: async () => ({ assistant_message: { content: '回答' } }) };
+        const app = await screen(() => {
+            if (first) { first = false; return pending; }
+            return ok;
+        });
+        app.input.value = '最初の質問';
+        const sending = app.send();
+        app.input.value = '次の質問の下書き';
+        if (trigger === 'submit') {
+            await app.send();
+        } else {
+            await app.input.handlers.get('keydown')({ key: 'Enter', [trigger]: true, preventDefault() {} });
+        }
+
+        assert.deepEqual(app.requests, ['最初の質問']);
+        assert.equal(app.input.value, '次の質問の下書き');
+        assert.equal(app.submit.disabled, true);
+        assert.equal(app.list.output.filter((item) => item.dataset?.typing === '1' && !item.removed).length, 1);
+
+        resolve(ok);
+        await sending;
+        assert.equal(app.submit.disabled, false);
+        assert.equal(app.input.value, '次の質問の下書き');
+        assert.equal(app.list.output.filter((item) => item.dataset?.typing === '1' && !item.removed).length, 0);
+        await app.send();
+        assert.deepEqual(app.requests, ['最初の質問', '次の質問の下書き']);
+    });
+}
+
+test('通信例外の後も送信ロックを解除して次の質問を送れる', async () => {
+    let first = true;
+    const app = await screen(() => {
+        if (first) { first = false; throw new Error('Network unavailable'); }
+        return { ok: true, status: 200, json: async () => ({ assistant_message: { content: '回答' } }) };
+    });
+    app.input.value = '最初の質問';
+    await app.send();
+    assert.equal(app.submit.disabled, false);
+    app.input.value = '再送する質問';
+    await app.send();
+    assert.deepEqual(app.requests, ['最初の質問', '再送する質問']);
 });
