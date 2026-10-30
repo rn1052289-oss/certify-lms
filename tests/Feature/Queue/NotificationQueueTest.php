@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Feature\Queue;
 
 use App\Enums\InvitationStatus;
-use App\Enums\MeetingStatus;
 use App\Enums\UserRole;
 use App\Mail\InvitationMail;
 use App\Models\Announcement;
@@ -18,7 +17,6 @@ use App\Models\QaReply;
 use App\Models\User;
 use App\Notifications\ChatMessageReceivedNotification;
 use App\Notifications\MeetingCanceledNotification;
-use App\Notifications\MeetingReminderNotification;
 use App\Notifications\MeetingReservedNotification;
 use App\Notifications\QaReplyReceivedNotification;
 use App\UseCases\Announcement\StoreAction;
@@ -51,7 +49,6 @@ class NotificationQueueTest extends TestCase
             new QaReplyReceivedNotification(QaReply::factory()->create()),
             new MeetingReservedNotification($meeting),
             new MeetingCanceledNotification($meeting),
-            new MeetingReminderNotification($meeting, 'eve'),
         ];
 
         DB::beginTransaction();
@@ -62,13 +59,23 @@ class NotificationQueueTest extends TestCase
         $this->assertDatabaseCount('jobs', 0);
         $this->assertDatabaseCount('notifications', 0);
         DB::commit();
-        $this->assertDatabaseCount('jobs', 10);
+        $this->assertDatabaseCount('jobs', 8);
         $this->assertSame(0, $this->mailCount());
         $this->work();
-        $this->assertDatabaseCount('notifications', 5);
+        $this->assertDatabaseCount('notifications', 4);
         $this->assertSame(4, $this->mailCount());
-        $this->assertSame(1, Mail::mailer('meeting_reminders')->getSymfonyTransport()->messages()->count());
-        $this->assertSame(10, NotificationDelivery::query()->whereNotNull('sent_at')->count());
+        $this->assertSame(8, NotificationDelivery::query()->whereNotNull('sent_at')->count());
+    }
+
+    public function test_meeting_reminder_is_sent_by_command_without_queue(): void
+    {
+        Meeting::factory()->create(['scheduled_at' => now()->addHours(12)]);
+        $this->artisan('notifications:send-meeting-reminders --window=eve')
+            ->expectsOutput('面談リマインダー（eve）：配信 4 チャネル、失敗 0 チャネル。')->assertSuccessful();
+        $this->assertDatabaseCount('jobs', 0);
+        $this->assertDatabaseCount('notifications', 2);
+        $this->assertSame(2, Mail::mailer('meeting_reminders')->getSymfonyTransport()->messages()->count());
+        $this->assertSame(2, MeetingReminderDelivery::query()->whereNotNull('database_sent_at')->whereNotNull('mail_sent_at')->count());
     }
 
     public function test_rollback_discards_notification_invitation_and_announcement_jobs(): void
@@ -221,40 +228,6 @@ class NotificationQueueTest extends TestCase
         $this->assertSame(1, $announcement->fresh()->dispatched_count);
         $this->assertSame(0, $announcement->fresh()->failed_count);
         $this->assertSame([], $announcement->fresh()->failed_user_ids);
-    }
-
-    public function test_reminder_canceled_while_queued_does_not_mark_channels_as_sent(): void
-    {
-        $meeting = Meeting::factory()->create(['scheduled_at' => now()->addHours(12)]);
-        $this->artisan('notifications:send-meeting-reminders --window=eve')
-            ->expectsOutput('面談リマインダー（eve）：受付 4 チャネル、投入失敗 0 件。')->assertSuccessful();
-        $this->assertDatabaseCount('jobs', 4);
-        $this->assertSame(0, MeetingReminderDelivery::query()->whereNotNull('database_sent_at')->count());
-        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
-        $this->assertDatabaseCount('jobs', 4);
-        $meeting->update(['status' => MeetingStatus::Canceled]);
-        $this->work();
-        $this->assertDatabaseCount('notifications', 0);
-        $this->assertSame(0, $this->mailCount());
-        $this->assertSame(0, MeetingReminderDelivery::query()->whereNotNull('mail_sent_at')->count());
-    }
-
-    public function test_reminder_can_be_accepted_again_after_queue_insertion_failure(): void
-    {
-        Meeting::factory()->create(['scheduled_at' => now()->addHours(12)]);
-        $failOnce = true;
-        DB::listen(function ($query) use (&$failOnce): void {
-            if ($failOnce && str_starts_with(strtolower($query->sql), 'insert into `jobs`')) {
-                $failOnce = false;
-                throw new \RuntimeException('Queue insertion interrupted');
-            }
-        });
-        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertFailed();
-        $this->artisan('notifications:send-meeting-reminders --window=eve')->assertSuccessful();
-        $this->work();
-        $this->assertDatabaseCount('notifications', 2);
-        $this->assertSame(2, Mail::mailer('meeting_reminders')->getSymfonyTransport()->messages()->count());
-        $this->assertSame(2, MeetingReminderDelivery::query()->whereNotNull('database_sent_at')->whereNotNull('mail_sent_at')->count());
     }
 
     public function test_invitation_and_reinvitation_use_queue_and_preserve_current_signed_link(): void

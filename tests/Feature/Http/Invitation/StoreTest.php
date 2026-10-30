@@ -42,7 +42,7 @@ class StoreTest extends TestCase
         ]);
 
         $response->assertRedirect(route('admin.users.index'));
-        $response->assertSessionHas('success');
+        $response->assertSessionHas('success', '招待の送信を受け付けました。');
 
         $this->assertDatabaseHas('users', [
             'email' => 'newcoach@example.test',
