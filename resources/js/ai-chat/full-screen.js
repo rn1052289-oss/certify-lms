@@ -83,11 +83,13 @@ function initForm() {
         }
     }
 
+    let isSubmitting = false;
     textarea.addEventListener('input', autoResize);
     // Cmd+Enter (mac) / Ctrl+Enter (Win/Linux) で送信、単独 Enter は textarea のデフォルト挙動 (改行) を維持
     textarea.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
+            if (isSubmitting) return;
             if (typeof form.requestSubmit === 'function') {
                 form.requestSubmit();
             } else {
@@ -133,8 +135,9 @@ function initForm() {
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const content = textarea.value.trim();
-        if (!content) return;
+        if (isSubmitting || !content) return;
 
+        isSubmitting = true;
         submittedContent = content;
         submit.disabled = true;
         emptyState?.remove();
@@ -162,6 +165,7 @@ function initForm() {
                 content: '送信に失敗しました。時間をおいて再度お試しください。', created_at: new Date().toISOString(),
             }, { viewerName });
         } finally {
+            isSubmitting = false;
             submit.disabled = false;
             clearTyping();
             scrollToBottom();

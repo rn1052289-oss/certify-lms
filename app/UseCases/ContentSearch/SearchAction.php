@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\UseCases\ContentSearch;
 
+use App\Enums\CertificationStatus;
 use App\Enums\ContentStatus;
+use App\Enums\EnrollmentStatus;
 use App\Models\Section;
 use App\Models\User;
 use App\Services\MarkdownRenderingService;
@@ -15,9 +17,9 @@ use Illuminate\Pagination\LengthAwarePaginator as PaginatorImpl;
  * 受講生向け教材内 Section 全文検索ユースケース。
  *
  * 検索結果は以下の条件で絞り込む(cascade visibility):
- * - 受講生が `enrollments` で登録済の資格内
+ * - 受講生が learning / passed で受講登録している資格内
  * - Section / 親 Chapter / 親 Part がすべて Published 状態
- * - 親 Certification が SoftDelete されていない
+ * - 親 Certification が Published 状態
  * 空キーワード / 未登録資格指定時は結果ゼロ件のレスポンスを返し、不要な検索クエリを発行しない。
  */
 final class SearchAction
@@ -42,6 +44,7 @@ final class SearchAction
 
         $enrolled = $student->enrollments()
             ->where('certification_id', $certificationId)
+            ->whereIn('status', [EnrollmentStatus::Learning->value, EnrollmentStatus::Passed->value])
             ->exists();
         if (! $enrolled) {
             return [
@@ -54,6 +57,7 @@ final class SearchAction
 
         $paginator = Section::query()
             ->with(['chapter.part.certification'])
+            ->whereHas('chapter.part.certification', fn ($q) => $q->where('status', CertificationStatus::Published->value))
             ->whereHas(
                 'chapter.part',
                 fn ($q) => $q->where('certification_id', $certificationId)
