@@ -37,7 +37,7 @@ class InvitationController extends Controller
 
         return redirect()
             ->route('admin.users.index')
-            ->with('success', '招待を送信しました。');
+            ->with('success', '招待の送信を受け付けました。');
     }
 
     public function resend(User $user, ResendRequest $request, ResendAction $action): RedirectResponse
@@ -46,7 +46,7 @@ class InvitationController extends Controller
 
         return redirect()
             ->route('admin.users.show', $user)
-            ->with('success', '招待を再送信しました。');
+            ->with('success', '招待の再送信を受け付けました。');
     }
 
     public function destroy(Invitation $invitation, DestroyAction $action): RedirectResponse

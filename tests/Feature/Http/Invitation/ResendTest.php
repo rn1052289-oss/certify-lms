@@ -48,7 +48,7 @@ class ResendTest extends TestCase
         $response = $this->actingAs($admin)->post(route('admin.invitations.resend', $target));
 
         $response->assertRedirect(route('admin.users.show', $target));
-        $response->assertSessionHas('success');
+        $response->assertSessionHas('success', '招待の再送信を受け付けました。');
 
         Mail::assertQueued(InvitationMail::class);
     }

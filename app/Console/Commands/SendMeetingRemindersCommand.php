@@ -29,7 +29,7 @@ class SendMeetingRemindersCommand extends Command
         }
 
         $now = now();
-        $queued = 0;
+        $sent = 0;
         $failed = 0;
 
         // 通知時刻を過ぎた開始前の予約を対象にし、遅延・配信失敗は次回実行で拾う。
@@ -49,20 +49,15 @@ class SendMeetingRemindersCommand extends Command
                     });
                 }
             })
-            ->chunkById(100, function ($meetings) use ($action, $window, $now, &$queued, &$failed): void {
+            ->chunkById(100, function ($meetings) use ($action, $window, $now, &$sent, &$failed): void {
                 foreach ($meetings as $meeting) {
-                    try {
-                        $result = $action($meeting, $window, $now);
-                        $queued += $result['queued'];
-                        $failed += $result['failed'];
-                    } catch (\Throwable $exception) {
-                        $failed++;
-                        report($exception);
-                    }
+                    $result = $action($meeting, $window, $now);
+                    $sent += $result['sent'];
+                    $failed += $result['failed'];
                 }
             });
 
-        $this->info("面談リマインダー（{$window}）：受付 {$queued} チャネル、投入失敗 {$failed} 件。");
+        $this->info("面談リマインダー（{$window}）：配信 {$sent} チャネル、失敗 {$failed} チャネル。");
 
         return $failed === 0 ? self::SUCCESS : self::FAILURE;
     }

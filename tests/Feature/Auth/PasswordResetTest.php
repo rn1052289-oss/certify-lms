@@ -26,14 +26,11 @@ class PasswordResetTest extends TestCase
             'status' => UserStatus::InProgress,
         ]);
 
-        $r1 = $this->post('/forgot-password', ['email' => 'exists@example.test']);
-        $r2 = $this->post('/forgot-password', ['email' => 'ghost@example.test']);
-
-        $r1->assertRedirect();
-        $r2->assertRedirect();
-        $r1->assertSessionHas('status');
-        $r2->assertSessionHas('status');
-        $this->assertSame($r1->getSession()->get('status'), $r2->getSession()->get('status'));
+        // セッションは要求をまたいで共有されるため、要求ごとに表示文言を確かめる。
+        $this->post('/forgot-password', ['email' => 'exists@example.test'])
+            ->assertRedirect()->assertSessionHas('status', 'パスワード再設定メールの送信を受け付けました。');
+        $this->post('/forgot-password', ['email' => 'ghost@example.test'])
+            ->assertRedirect()->assertSessionHas('status', 'パスワード再設定メールの送信を受け付けました。');
 
         Notification::assertSentTo($existing, ResetPasswordNotification::class);
     }

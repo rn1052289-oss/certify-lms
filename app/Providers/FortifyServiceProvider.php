@@ -11,6 +11,7 @@ use App\Actions\Fortify\UpdateUserPassword;
 use App\Actions\Fortify\UpdateUserProfileInformation;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
@@ -31,10 +32,11 @@ class FortifyServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        // アカウント列挙攻撃の防止: 存在しない email でも「送信しました」と同一メッセージを返す。
-        $this->app->singleton(
+        // アカウント列挙攻撃の防止: 存在しない email でも同一の受付メッセージ（lang/ja/passwords.php の sent）を返す。
+        // 失敗時の status（passwords.user）は使わず、成功時と同じ受付の文言にそろえる（T-A-05）。
+        $this->app->bind(
             FailedPasswordResetLinkRequestResponse::class,
-            SuccessfulPasswordResetLinkRequestResponse::class,
+            fn () => new SuccessfulPasswordResetLinkRequestResponse(Password::RESET_LINK_SENT),
         );
     }
 
