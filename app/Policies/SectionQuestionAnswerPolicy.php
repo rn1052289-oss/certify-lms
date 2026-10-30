@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Policies;
 
+use App\Enums\CertificationStatus;
 use App\Enums\ContentStatus;
 use App\Enums\EnrollmentStatus;
 use App\Enums\UserRole;
@@ -17,7 +18,7 @@ use App\Models\User;
  *
  * - view: 本人のみ閲覧可
  * - create: 本人(Student) + ステータス受講中 + 対象資格を learning または passed で受講中 +
- *   cascade visibility(SectionQuestion / Section / Chapter / Part がすべて Published)
+ *   cascade visibility(SectionQuestion / Section / Chapter / Part / 資格がすべて Published)
  */
 class SectionQuestionAnswerPolicy
 {
@@ -36,19 +37,21 @@ class SectionQuestionAnswerPolicy
             return false;
         }
 
-        $question->loadMissing('section.chapter.part');
+        $question->loadMissing('section.chapter.part.certification');
         $section = $question->section;
         $chapter = $section?->chapter;
         $part = $chapter?->part;
+        $certification = $part?->certification;
 
-        if ($section === null || $chapter === null || $part === null) {
+        if ($section === null || $chapter === null || $part === null || $certification === null) {
             return false;
         }
 
         if ($question->status !== ContentStatus::Published
             || $section->status !== ContentStatus::Published
             || $chapter->status !== ContentStatus::Published
-            || $part->status !== ContentStatus::Published) {
+            || $part->status !== ContentStatus::Published
+            || $certification->status !== CertificationStatus::Published) {
             return false;
         }
 

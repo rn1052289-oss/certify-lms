@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Policies;
 
+use App\Enums\CertificationStatus;
 use App\Enums\EnrollmentStatus;
 use App\Enums\UserRole;
 use App\Models\Enrollment;
@@ -12,7 +13,7 @@ use App\Models\User;
 /**
  * 苦手分野ドリル画面の認可ポリシー。
  *
- * 判定: 本人 Student + 自分の Enrollment + status が learning または passed。
+ * 判定: 本人 Student + 自分の Enrollment + status が learning または passed + 公開中の資格。
  * `failed` 状態の Enrollment では弱点ドリルへの遷移は不可。
  */
 class WeakDrillPolicy
@@ -27,7 +28,7 @@ class WeakDrillPolicy
             return false;
         }
 
-        return in_array(
+        return $enrollment->certification?->status === CertificationStatus::Published && in_array(
             $enrollment->status,
             [EnrollmentStatus::Learning, EnrollmentStatus::Passed],
             true,
