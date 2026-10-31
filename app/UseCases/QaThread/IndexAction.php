@@ -51,7 +51,11 @@ final class IndexAction
             )
             ->when(
                 $filters['keyword'] ?? null,
-                fn ($query, string $keyword) => $query->where('body', 'LIKE', '%'.$keyword.'%'),
+                fn ($query, string $keyword) => $query->where(
+                    fn ($query) => $query
+                        ->where('title', 'LIKE', '%'.$keyword.'%')
+                        ->orWhere('body', 'LIKE', '%'.$keyword.'%'),
+                ),
             );
 
         return [
