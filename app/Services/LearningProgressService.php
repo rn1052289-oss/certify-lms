@@ -190,13 +190,49 @@ class LearningProgressService
     }
 
     /**
+     * Part 画面の公開 Chapter と進捗をまとめて返す。空階層の未完了判定と整数百分率もここで算出する。
+     *
+     * @return array{chapters: \Illuminate\Database\Eloquent\Collection<int, Chapter>, completedByChapter: array<string, int>, progressByChapter: array<string, array{total: int, completed: int, isCompleted: bool, percentage: int}>}
+     */
+    public function summarizeChapters(Part $part, ?Enrollment $enrollment): array
+    {
+        $chapters = $part->chapters()
+            ->where('status', ContentStatus::Published->value)
+            ->ordered()
+            ->withCount([
+                'sections as sections_total_count' => fn ($query) => $query
+                    ->where('status', ContentStatus::Published->value),
+            ])
+            ->get();
+
+        $completedByChapter = $this->completedSectionCountsByChapter($enrollment, $chapters);
+        $progressByChapter = [];
+        foreach ($chapters as $chapter) {
+            $total = (int) $chapter->sections_total_count;
+            $completed = (int) ($completedByChapter[$chapter->id] ?? 0);
+            $progressByChapter[$chapter->id] = [
+                'total' => $total,
+                'completed' => $completed,
+                'isCompleted' => $total > 0 && $completed >= $total,
+                'percentage' => $total > 0 ? (int) round($completed / $total * 100) : 0,
+            ];
+        }
+
+        return [
+            'chapters' => $chapters,
+            'completedByChapter' => $completedByChapter,
+            'progressByChapter' => $progressByChapter,
+        ];
+    }
+
+    /**
      * 指定 Chapter の公開 Section 読了数を 1 クエリで取得する。未読の Chapter はキーを持たない。
      *
      * @param Collection<int, Chapter> $chapters 公開状態の確認済み Chapter 一覧
      *
      * @return array<string, int>
      */
-    public function completedSectionCountsByChapter(?Enrollment $enrollment, Collection $chapters): array
+    private function completedSectionCountsByChapter(?Enrollment $enrollment, Collection $chapters): array
     {
         $completedByChapter = [];
         if ($enrollment !== null && $chapters->isNotEmpty()) {
