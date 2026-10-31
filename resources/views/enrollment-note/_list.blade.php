@@ -7,6 +7,7 @@
     use App\Models\EnrollmentNote;
 
     $notes = $enrollment->notes()->with('author')->orderByDesc('created_at')->get();
+    $notes->each->setRelation('enrollment', $enrollment);
 @endphp
 
 <x-card padding="md" shadow="sm">

@@ -143,7 +143,7 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 
 ## 提供済み Blade を変更した箇所・理由・根拠
 
-提供された Blade（`resources/views/` 以下）は、次の11ファイルだけを変更しています。どれも Ticket の確定仕様・PM回答・本人の許可に基づく必要最小限の変更で、画面構成・デザインは維持しています。
+提供された Blade（`resources/views/` 以下）は、次の12ファイルだけを変更しています。どれも Ticket の確定仕様・PM回答・本人の許可に基づく必要最小限の変更で、画面構成・デザインは維持しています。
 
 | 対象ファイル（`resources/views/` 以下） | 変更内容 | なぜ変更したか・根拠 | 対応 |
 |---|---|---|---|
@@ -152,6 +152,7 @@ sail bin pint --test     # 整形漏れの確認（CI 相当のチェック）
 | `settings/availability/_partials/form.blade.php` | 開始・終了時刻の入力を1時間刻み（`step="3600"`）にし、隠し項目 `_modal` を追加して、入力値とエラーを送信元のフォームにだけ戻す | 面談は毎時 00 分開始・60 分単位のため、対応可能時間も 00 分単位で登録する確定仕様です（B-A-05）。1ページに追加用と編集用のフォームが並び項目名も同じなので、`old()` と `$errors` をそのまま使うと他のフォームにも入力値やエラーが出ます。入力エラー時のモーダル再表示は 2026-10-31 のPM回答で範囲内と確定しています。 | B-A-05（#88） |
 | `settings/_partials/tab-meeting.blade.php` | 追加・編集のモーダルに、入力エラー時は送信元のモーダルを開いた状態で表示する `auto-open` を追加。00 分単位の登録に合わせて説明のコメントを修正 | 入力エラーで戻ったときにモーダルが閉じたままだと、エラーが見えず入力をやり直せないためです（2026-10-31 のPM回答で範囲内と確定）。開くのは `_modal` で送信元と分かったモーダルだけです。 | B-A-05（#88） |
 | `qa-thread/_filter.blade.php` | 検索欄の placeholder・aria-label を「質問のタイトル・本文を検索」に変更 | キーワード検索の対象に質問のタイトルも含めるという 2026-10-31 のPM回答に合わせ、検索欄の案内を実際の検索対象と揃えます。 | S-B-01（#105） |
+| `enrollment-note/_list.blade.php` | 取得したメモの各件に、表示中の受講登録を親としてセットする1行を追加 | メモ一覧の編集・削除ボタンを出し分ける認可（`EnrollmentNotePolicy`）が、メモごとに親の受講登録と担当コーチを読み直しており、メモの件数分 SQL が増えていました（N+1）。一覧はこの Blade 自身が取得しているため、Controller・Action 側の先読みでは解消できません。表示内容・並び順・認可の条件は変えていません。変更内容を提示し、本人の許可を得ています。 | S-B-07（#111） |
 | `learning/parts/show.blade.php` | Chapter ごとの完了判定・率の計算をやめ、`LearningProgressService` の集計結果を表示する | 進捗の集計を専用 Service へ集約する確定仕様（T-A-03）です。表示する数値・判定・並び順は変えていません。 | T-A-03（#106） |
 | `ai-chat/_partials/message-bubble.blade.php`<br>`ai-chat/show.blade.php`<br>`components/ai-chat/floating-widget.blade.php`<br>`layouts/_partials/sidebar-student.blade.php`<br>`ai-chat/_partials/new-conversation-modal.blade.php` | 応答時間・トークン数・モデル名の非表示、機能OFF時のナビ非表示、受付拒否時の質問文の復元 | 下の「AI 相談（S-A-02）」の「提供済み Blade を変更した箇所・理由・根拠」に、ファイルごとの内容と根拠を記載しています。 | S-A-02（#83） |
 
