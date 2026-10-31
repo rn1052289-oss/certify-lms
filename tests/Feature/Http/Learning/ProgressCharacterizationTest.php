@@ -13,6 +13,7 @@ use App\Models\Section;
 use App\Models\SectionProgress;
 use App\Models\User;
 use App\Services\Learning\ProgressSummary;
+use App\Services\LearningProgressService;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -165,6 +166,32 @@ class ProgressCharacterizationTest extends TestCase
         $this->assertSame(3, $chapters[$chapter->id]->sections_total_count);
         $this->assertSame(0, $chapters[$empty->id]->sections_total_count);
         $this->assertFalse($chapters->has($hidden->id));
+    }
+
+    public function test_part_page_displays_service_summary_without_recalculating_progress(): void
+    {
+        $enrollment = $this->enrollment();
+        $part = Part::factory()->for($enrollment->certification)->published()->create();
+        $chapter = Chapter::factory()->for($part)->published()->create();
+        $chapter->setAttribute('sections_total_count', 99);
+        $summary = [
+            $chapter->id => ['total' => 7, 'completed' => 3, 'isCompleted' => false, 'percentage' => 43],
+        ];
+
+        $this->mock(LearningProgressService::class)->shouldReceive('summarizeChapters')
+            ->once()
+            ->withArgs(fn (Part $target, ?Enrollment $current): bool => $target->is($part) && $current?->is($enrollment))
+            ->andReturn([
+                'chapters' => $part->newCollection([$chapter]),
+                'completedByChapter' => [$chapter->id => 3],
+                'progressByChapter' => $summary,
+            ]);
+
+        $this->actingAs($enrollment->user)->get(route('learning.parts.show', $part))
+            ->assertOk()
+            ->assertViewHas('progressByChapter', $summary)
+            ->assertSee('3 / 7 読了')
+            ->assertSee('width: 43%', false);
     }
 
     private function enrollment(): Enrollment
