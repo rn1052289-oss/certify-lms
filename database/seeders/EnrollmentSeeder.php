@@ -43,6 +43,7 @@ final class EnrollmentSeeder extends Seeder
     public function run(): void
     {
         $publishedCertifications = Certification::query()
+            ->with('coaches')
             ->where('status', CertificationStatus::Published->value)
             ->orderBy('created_at')
             ->get();

@@ -10,6 +10,7 @@ use App\Models\Enrollment;
 use App\Models\EnrollmentGoal;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -499,5 +500,63 @@ class EnrollmentGoalControllerTest extends TestCase
             'withdrawn' => ['withdrawn'],
             'invited' => ['invited'],
         ];
+    }
+
+    /**
+     * 受講詳細を1回開いたときの SQL 本数を数える。前のリクエストで読み込んだ関連を持ち越さないよう、閲覧者は読み直す。
+     */
+    private function countShowQueries(User $viewer, Enrollment $enrollment): int
+    {
+        $viewer = $viewer->fresh();
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $response = $this->actingAs($viewer)->get(route('enrollments.show', $enrollment));
+
+        $queryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $response->assertStatus(200);
+        $enrollment->goals()->pluck('title')->each(fn (string $title) => $response->assertSee($title));
+
+        return $queryCount;
+    }
+
+    public function test_owner_show_query_count_does_not_grow_with_goal_count(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+        $enrollment = Enrollment::factory()->for($student)->learning()->create();
+
+        EnrollmentGoal::factory()->forEnrollment($enrollment)->create();
+        $fewGoalsQueryCount = $this->countShowQueries($student, $enrollment);
+
+        EnrollmentGoal::factory()->count(4)->forEnrollment($enrollment)->create();
+        $manyGoalsQueryCount = $this->countShowQueries($student, $enrollment);
+
+        $this->assertSame($fewGoalsQueryCount, $manyGoalsQueryCount);
+    }
+
+    public function test_assigned_coach_show_query_count_does_not_grow_with_goal_count(): void
+    {
+        $coach = User::factory()->coach()->create();
+        $certification = Certification::factory()->published()->create();
+        CertificationCoachAssignment::factory()->create([
+            'certification_id' => $certification->id,
+            'user_id' => $coach->id,
+        ]);
+        $enrollment = Enrollment::factory()
+            ->for(User::factory()->student()->inProgress())
+            ->for($certification)
+            ->learning()
+            ->create();
+
+        EnrollmentGoal::factory()->forEnrollment($enrollment)->create();
+        $fewGoalsQueryCount = $this->countShowQueries($coach, $enrollment);
+
+        EnrollmentGoal::factory()->count(4)->forEnrollment($enrollment)->create();
+        $manyGoalsQueryCount = $this->countShowQueries($coach, $enrollment);
+
+        $this->assertSame($fewGoalsQueryCount, $manyGoalsQueryCount);
     }
 }

@@ -10,6 +10,7 @@ use App\Models\Enrollment;
 use App\Models\EnrollmentNote;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -453,5 +454,46 @@ class EnrollmentNoteControllerTest extends TestCase
         $this->actingAs($admin)->post(route('enrollments.notes.store', $enrollment), ['body' => '不正作成。'])->assertStatus(404);
 
         $this->assertDatabaseHas('enrollment_notes', ['id' => $note->id]);
+    }
+
+    /**
+     * 受講詳細を1回開いたときの SQL 本数を数える。前のリクエストで読み込んだ関連を持ち越さないよう、閲覧者は読み直す。
+     */
+    private function countShowQueries(User $viewer, Enrollment $enrollment): int
+    {
+        $viewer = $viewer->fresh();
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $response = $this->actingAs($viewer)->get(route('enrollments.show', $enrollment));
+
+        $queryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $response->assertStatus(200);
+        $enrollment->notes()->pluck('id')->each(
+            fn (string $noteId) => $response->assertSee(route('enrollment-notes.edit', $noteId), false),
+        );
+
+        return $queryCount;
+    }
+
+    public function test_show_query_count_does_not_grow_with_note_count(): void
+    {
+        $coach = User::factory()->coach()->create();
+        $enrollment = $this->assignedEnrollment($coach);
+        $createNotes = fn (int $count) => EnrollmentNote::factory()->count($count)->create([
+            'enrollment_id' => $enrollment->id,
+            'author_user_id' => $coach->id,
+        ]);
+
+        $createNotes(1);
+        $fewNotesQueryCount = $this->countShowQueries($coach, $enrollment);
+
+        $createNotes(4);
+        $manyNotesQueryCount = $this->countShowQueries($coach, $enrollment);
+
+        $this->assertSame($fewNotesQueryCount, $manyNotesQueryCount);
     }
 }
