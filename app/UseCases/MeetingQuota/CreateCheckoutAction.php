@@ -61,7 +61,7 @@ final class CreateCheckoutAction
         }
 
         abort_unless(is_string($session->id) && str_starts_with($session->id, 'cs_')
-            && is_string($session->url) && str_starts_with($session->url, 'https://checkout.stripe.com/'), 503);
+            && is_string($session->url) && str_starts_with($session->url, 'https://checkout.stripe.com/'), 503, '決済画面を開けませんでした。時間をおいてお試しください。');
 
         DB::transaction(function () use ($payment, $session) {
             $lockedPayment = Payment::query()->lockForUpdate()->findOrFail($payment->id);
