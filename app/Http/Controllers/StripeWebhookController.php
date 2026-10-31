@@ -11,6 +11,12 @@ use Stripe\Exception\SignatureVerificationException;
 use Stripe\Webhook;
 use UnexpectedValueException;
 
+/**
+ * Stripe 決済通知 (Webhook) の受信 Controller。
+ *
+ * webhook_secret 未設定は 503、署名を検証できない通知は 400 を返す。検証済みイベントの処理(面談回数の加算)は
+ * `ProcessStripeWebhookAction` に委譲する。
+ */
 class StripeWebhookController extends Controller
 {
     public function __invoke(Request $request, ProcessStripeWebhookAction $action): Response

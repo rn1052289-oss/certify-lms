@@ -16,7 +16,17 @@ use App\Services\GoogleCalendarService;
 use App\UseCases\MeetingQuota\RefundQuotaAction;
 use Illuminate\Support\Facades\DB;
 
-/** 開始前の面談をキャンセルし、面談回数を返却するユースケース。 */
+/**
+ * 開始前の面談をキャンセルし、面談回数を返却するユースケース。
+ *
+ * 面談予約をキャンセルするユースケース(受講生・コーチの双方から呼ばれる)。
+ *
+ * 処理フロー(1 〜 3 は DB::transaction() 内):
+ * 1. reserved かつ開始前の面談のみ canceled に更新する
+ * 2. 消費した面談回数を受講生へ返却する(RefundQuotaAction)
+ * 3. コミット後、相手側(受講生が取り消したらコーチ、コーチなら受講生)へキャンセル通知を送る
+ * 4. Google Calendar の予定を削除する。失敗してもキャンセルは維持し、警告文を返す
+ */
 final class CancelAction
 {
     public function __construct(
@@ -24,6 +34,12 @@ final class CancelAction
         private readonly GoogleCalendarService $calendar,
     ) {}
 
+    /**
+     * @return string|null Google Calendar との同期に失敗したときの警告文
+     *
+     * @throws MeetingStatusTransitionException reserved 以外の面談
+     * @throws MeetingAlreadyStartedException 開始時刻を過ぎた面談
+     */
     public function __invoke(Meeting $meeting, User $actor): ?string
     {
         DB::transaction(function () use ($meeting, $actor) {

@@ -8,6 +8,11 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
+/**
+ * 本人のプロフィール画像を削除するユースケース。
+ *
+ * avatar_url を NULL にしてから、本人のディレクトリ(avatars/{user_id})にある旧画像だけをストレージから削除する。
+ */
 final class DestroyAction
 {
     public function __invoke(User $user): void

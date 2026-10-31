@@ -15,10 +15,21 @@ use App\Services\StripeCheckoutService;
 use Illuminate\Support\Facades\DB;
 use Stripe\Exception\ApiErrorException;
 
+/**
+ * 受講生の追加面談購入を開始し、Stripe Checkout の URL を返すユースケース。
+ *
+ * 処理フロー:
+ * 1. 受講生行と面談パックをロックし、受講中の受講生 × 公開中のパックであることを確認して、金額・回数を控えた Payment(pending)を作る
+ * 2. DB ロックの外で Checkout Session を作成する(通信失敗は 503。控えは残し、遅れて届く通知と照合できるようにする)
+ * 3. Payment に Session ID を保存する
+ */
 final class CreateCheckoutAction
 {
     public function __construct(private readonly StripeCheckoutService $checkout) {}
 
+    /**
+     * @return string Stripe Checkout の URL
+     */
     public function __invoke(User $student, string $packId): string
     {
         abort_unless(filled(config('services.stripe.secret')), 503, '決済サービスを利用できません。');

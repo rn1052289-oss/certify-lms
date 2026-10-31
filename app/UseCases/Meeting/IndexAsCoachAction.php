@@ -8,7 +8,13 @@ use App\Models\Meeting;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
-/** コーチ本人宛の面談一覧をフィルタ付きで取得するユースケース。 */
+/**
+ * コーチ本人宛の面談一覧をフィルタ付きで取得するユースケース。
+ *
+ * コーチ本人の担当面談一覧を取得するユースケース。
+ *
+ * filter: upcoming(既定、次の面談が先頭になる昇順) / past / all(新しい順)。受講生・受講登録で絞り込める。
+ */
 final class IndexAsCoachAction
 {
     /** @return array{meetings: LengthAwarePaginator, filter: string, studentFilter: ?string, enrollmentFilter: ?string} */

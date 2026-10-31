@@ -10,9 +10,22 @@ use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
-/** OAuth と Calendar REST API の通信境界。外部レスポンスや秘密を例外文へ含めない。 */
+/**
+ * OAuth と Calendar REST API の通信境界。外部レスポンスや秘密を例外文へ含めない。
+ *
+ * Google OAuth と Google Calendar API(freeBusy / events)の呼び出しを提供する Client。
+ *
+ * アクセストークンの期限が 1 分以内なら、呼び出し前に refresh_token で更新する。
+ * 1 回の通信待ちは最大 5 秒で、呼び出し側が期限($deadline)を渡した場合はその残り時間に収める。
+ * 失敗はすべて RuntimeException にし、本文やトークンを例外へ含めない。
+ */
 class GoogleCalendarClient
 {
+    /**
+     * Google の同意画面の URL を返す(scope: calendar.events / calendar.freebusy、offline で refresh_token を要求)。
+     *
+     * @throws RuntimeException 連携設定(client_id / client_secret / redirect_uri)が無い
+     */
     public function authorizationUrl(string $state): string
     {
         $this->ensureConfigured();
@@ -28,6 +41,13 @@ class GoogleCalendarClient
         ]);
     }
 
+    /**
+     * callback で受け取った認可コードをトークンに交換する。
+     *
+     * @return array<string, mixed> access_token / refresh_token / expires_in を含む応答
+     *
+     * @throws RuntimeException
+     */
     public function exchangeCode(string $code): array
     {
         return $this->token(['code' => $code, 'grant_type' => 'authorization_code', 'redirect_uri' => config('services.google_calendar.redirect_uri')]);
@@ -65,6 +85,13 @@ class GoogleCalendarClient
         return Http::withToken($credential->access_token)->acceptJson()->withOptions(['timeout' => $timeout, 'connect_timeout' => min(3, $timeout)]);
     }
 
+    /**
+     * 指定期間の予定(busy)を返す。
+     *
+     * @return array<int, array{start: string, end: string}>
+     *
+     * @throws RuntimeException
+     */
     public function busy(GoogleCredential $credential, CarbonInterface $start, CarbonInterface $end, ?float $deadline = null): array
     {
         $response = $this->authorized($credential, $deadline)->post('https://www.googleapis.com/calendar/v3/freeBusy', [
@@ -80,6 +107,13 @@ class GoogleCalendarClient
         return $calendar['busy'];
     }
 
+    /**
+     * 予定を作成し、作成した予定の ID を返す。ID は呼び出し側が決めたものと一致することを確認する。
+     *
+     * @param array<string, mixed> $event Google Calendar の events リソース
+     *
+     * @throws RuntimeException
+     */
     public function createEvent(GoogleCredential $credential, array $event): string
     {
         $response = $this->authorized($credential)->post($this->eventsUrl($credential->calendar_id), $event);
@@ -90,6 +124,11 @@ class GoogleCalendarClient
         return $response->json('id');
     }
 
+    /**
+     * 予定を削除する。既に削除済み(404 / 410)なら成功として扱う。
+     *
+     * @throws RuntimeException
+     */
     public function deleteEvent(GoogleCredential $credential, string $calendarId, string $eventId): void
     {
         $response = $this->authorized($credential)->delete($this->eventsUrl($calendarId).'/'.rawurlencode($eventId));
@@ -121,6 +160,9 @@ class GoogleCalendarClient
         return min(5, $remaining);
     }
 
+    /**
+     * 通信待ちの期限計算に使う単調増加の秒数。テストで時間経過を差し替えるため protected にしている。
+     */
     protected function monotonicSeconds(): float
     {
         return hrtime(true) / 1_000_000_000;

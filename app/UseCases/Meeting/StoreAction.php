@@ -24,7 +24,17 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
-/** 残数を消費し、空き枠のコーチを自動割当して面談を予約するユースケース。 */
+/**
+ * 残数を消費し、空き枠のコーチを自動割当して面談を予約するユースケース。
+ *
+ * 受講生の面談予約を作成し、担当コーチを自動割当するユースケース。
+ *
+ * 処理フロー:
+ * 1. 枠の検証と Google Calendar の busy 取得を、DB トランザクションの外で行う
+ * 2. 受講生行をロックして残面談回数を確認し、60 分間すべて対応可能かつ先約の無いコーチから割当先を決める
+ * 3. Meeting を作成し、面談回数を消費する(ConsumeQuotaAction)
+ * 4. 予約確定後に Google Calendar へ予定を作成する。失敗しても予約は維持し、警告文を返す
+ */
 final class StoreAction
 {
     public function __construct(

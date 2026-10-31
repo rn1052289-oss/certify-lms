@@ -10,6 +10,13 @@ use App\Enums\UserStatus;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
+/**
+ * 管理者のお知らせ配信リクエスト。
+ *
+ * - target_type=certification: 対象資格(target_certification_id)を必須とする
+ * - target_type=user: 受講中の受講生(target_user_id)を必須とする
+ * - target_type=all_students: 対象 ID は受け付けない(exclude)
+ */
 class StoreRequest extends FormRequest
 {
     public function authorize(): bool
@@ -17,6 +24,9 @@ class StoreRequest extends FormRequest
         return $this->user()?->role === UserRole::Admin;
     }
 
+    /**
+     * @return array<string, array<int, mixed>>
+     */
     public function rules(): array
     {
         return [
@@ -35,6 +45,9 @@ class StoreRequest extends FormRequest
         ];
     }
 
+    /**
+     * @return array<string, string>
+     */
     public function attributes(): array
     {
         return [

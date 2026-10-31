@@ -9,6 +9,12 @@ use App\Enums\UserStatus;
 use App\Models\AiChatConversation;
 use App\Models\User;
 
+/**
+ * AI 相談会話 (AiChatConversation) リソースに対する認可ポリシー。
+ *
+ * - create: AI 相談が有効(config `ai-chat.enabled`)かつ受講中の受講生のみ
+ * - view / update / delete: create の条件を満たす本人の会話のみ(コーチ・admin も他人の会話は不可)
+ */
 class AiChatConversationPolicy
 {
     public function create(User $user): bool

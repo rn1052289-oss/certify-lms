@@ -9,7 +9,13 @@ use App\Services\GoogleCalendarService;
 use App\Services\MeetingAvailabilityService;
 use Carbon\Carbon;
 
-/** 予約画面の空き枠と同期警告を取得するユースケース。 */
+/**
+ * 予約画面の空き枠と同期警告を取得するユースケース。
+ *
+ * 受講生の面談予約画面に、指定日 1 日分の空き枠を返すユースケース。
+ *
+ * 空き枠は MeetingAvailabilityService で集計し、Google Calendar との同期に失敗した場合は警告文を添える。
+ */
 final class FetchAvailabilityAction
 {
     public function __construct(

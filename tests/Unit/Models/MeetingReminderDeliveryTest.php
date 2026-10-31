@@ -50,7 +50,7 @@ class MeetingReminderDeliveryTest extends TestCase
         return MeetingReminderDelivery::create(array_merge([
             'meeting_id' => $meeting->id,
             'user_id' => $user->id,
-            'window' => 'day_before',
+            'window' => 'eve',
             'notification_id' => (string) Str::uuid(),
         ], $attributes));
     }

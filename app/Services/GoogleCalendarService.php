@@ -8,6 +8,7 @@ use App\Enums\MeetingStatus;
 use App\Models\GoogleCredential;
 use App\Models\Meeting;
 use App\Models\MeetingGoogleEvent;
+use App\Models\User;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -15,7 +16,17 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
-/** Google 障害は LMS の予約・取消を巻き戻さず、同じリクエストに警告を返す。 */
+/**
+ * Google 障害は LMS の予約・取消を巻き戻さず、同じリクエストに警告を返す。
+ *
+ * コーチの Google Calendar と面談予約を同期する Service。
+ *
+ * - 空き時間の確認: 先約(busy)と重なる枠を予約候補から外す
+ * - 予約・取消: Google Calendar に予定を作成 / 削除する
+ *
+ * Google との通信に失敗しても例外は投げず、LMS 側の予約・取消を優先する。失敗は warning() で画面の警告に使い、
+ * ログには例外クラスだけを残す。busy の取得は 1 リクエスト内で通信待ち 5 秒を全コーチで共有し、結果をキャッシュする。
+ */
 class GoogleCalendarService
 {
     public const WARNING = 'Google Calendarとの同期に失敗した';
@@ -28,12 +39,21 @@ class GoogleCalendarService
 
     public function __construct(private GoogleCalendarClient $client) {}
 
+    /**
+     * このリクエスト内で同期に失敗していれば警告文を返す。
+     */
     public function warning(): ?string
     {
         return $this->failed ? self::WARNING : null;
     }
 
-    /** @return array<string, array<int, array{start: string, end: string}>> */
+    /**
+     * 連携済みコーチごとの予定(busy)を返す。未連携のコーチは含めず、取得に失敗したコーチは空配列にする。
+     *
+     * @param Collection<int, User> $coaches
+     *
+     * @return array<string, array<int, array{start: string, end: string}>>
+     */
     public function busyForCoaches(Collection $coaches, CarbonInterface $start, CarbonInterface $end): array
     {
         $busy = [];
@@ -70,6 +90,11 @@ class GoogleCalendarService
         return $busy;
     }
 
+    /**
+     * 予定のいずれかが [start, end) と重なるかを返す。終了と開始が一致するだけなら重ならない。
+     *
+     * @param array<int, array{start: string, end: string}> $periods
+     */
     public function overlaps(array $periods, CarbonInterface $start, CarbonInterface $end): bool
     {
         foreach ($periods as $period) {
@@ -82,7 +107,11 @@ class GoogleCalendarService
         return false;
     }
 
-    /** 予約確定後に呼ぶ。外部通信中に取消された場合は作成した予定を片付ける。 */
+    /**
+     * 面談の予定をコーチの Google Calendar に作成し、MeetingGoogleEvent に対応を記録する。
+     *
+     * 予約確定後に呼ぶ。外部通信中に取消された場合は作成した予定を片付ける。
+     */
     public function reserve(Meeting $meeting): void
     {
         $credential = GoogleCredential::query()->where('user_id', $meeting->coach_id)->first();
@@ -121,6 +150,9 @@ class GoogleCalendarService
         }
     }
 
+    /**
+     * 面談の予定を Google Calendar から削除し、MeetingGoogleEvent を削除する。連携を解除済みなら何もしない。
+     */
     public function cancel(Meeting $meeting): void
     {
         $event = MeetingGoogleEvent::query()->with('credential')->where('meeting_id', $meeting->id)->first();
