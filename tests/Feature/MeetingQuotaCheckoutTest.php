@@ -14,6 +14,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use Stripe\ApiRequestor;
+use Stripe\Checkout\Session;
 use Stripe\Exception\ApiConnectionException;
 use Stripe\HttpClient\ClientInterface;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -167,7 +168,9 @@ class MeetingQuotaCheckoutTest extends TestCase
             ->andThrow(new ApiConnectionException('timeout'));
 
         $this->actingAs(User::factory()->student()->create())
-            ->post(route('meeting-quota.checkout.create'), ['meeting_pack_id' => $pack->id])->assertStatus(503);
+            ->post(route('meeting-quota.checkout.create'), ['meeting_pack_id' => $pack->id])
+            ->assertRedirect(route('meeting-quota.checkout.select'))
+            ->assertSessionHas('error', '決済画面を開けませんでした。時間をおいてお試しください。');
         $this->assertDatabaseHas('payments', ['status' => 'pending', 'stripe_checkout_session_id' => null]);
         $this->assertDatabaseCount('meeting_quota_transactions', 0);
     }
@@ -177,8 +180,35 @@ class MeetingQuotaCheckoutTest extends TestCase
         config(['services.stripe.secret' => null]);
         $pack = MeetingPack::factory()->published()->create();
         $this->actingAs(User::factory()->student()->create())
-            ->post(route('meeting-quota.checkout.create'), ['meeting_pack_id' => $pack->id])->assertStatus(503);
+            ->post(route('meeting-quota.checkout.create'), ['meeting_pack_id' => $pack->id])
+            ->assertRedirect(route('meeting-quota.checkout.select'))
+            ->assertSessionHas('error', '決済サービスを利用できません。');
         $this->assertDatabaseCount('payments', 0);
+    }
+
+    public function test_unexpected_checkout_response_returns_to_select_with_message(): void
+    {
+        $pack = MeetingPack::factory()->published()->create();
+        $this->mock(StripeCheckoutService::class)->shouldReceive('create')->once()
+            ->andReturn(Session::constructFrom(['id' => 'cs_test_unexpected', 'url' => 'https://example.com/pay']));
+
+        $this->actingAs(User::factory()->student()->create())
+            ->post(route('meeting-quota.checkout.create'), ['meeting_pack_id' => $pack->id])
+            ->assertRedirect(route('meeting-quota.checkout.select'))
+            ->assertSessionHas('error', '決済画面を開けませんでした。時間をおいてお試しください。');
+        $this->assertDatabaseHas('payments', ['status' => 'pending', 'stripe_checkout_session_id' => null]);
+    }
+
+    public function test_unavailable_checkout_message_is_shown_on_select_page(): void
+    {
+        config(['services.stripe.secret' => null]);
+        $pack = MeetingPack::factory()->published()->create();
+        $this->actingAs(User::factory()->student()->create())
+            ->followingRedirects()
+            ->post(route('meeting-quota.checkout.create'), ['meeting_pack_id' => $pack->id])
+            ->assertOk()
+            ->assertSee('決済サービスを利用できません。')
+            ->assertSee($pack->name);
     }
 
     public function test_return_page_is_owned_read_only_and_repeated_get_never_grants_quota(): void
