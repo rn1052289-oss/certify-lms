@@ -69,9 +69,9 @@
             name="keyword"
             value="{{ $keyword }}"
             maxlength="100"
-            placeholder="質問の本文を検索..."
+            placeholder="質問のタイトル・本文を検索..."
             class="w-full text-[13px] py-2 pl-9 pr-3 rounded-md bg-white border border-default placeholder:text-ink-400 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/15 transition-colors"
-            aria-label="質問本文を検索"
+            aria-label="質問のタイトル・本文を検索"
         >
     </div>
 </form>

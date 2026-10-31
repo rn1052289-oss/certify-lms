@@ -10,6 +10,7 @@ use App\Models\QaReply;
 use App\Models\QaThread;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Tests\TestCase;
 
@@ -26,6 +27,44 @@ class QaThreadControllerTest extends TestCase
             'user_id' => $author->id,
             'certification_id' => $certification->id,
         ]);
+    }
+
+    /**
+     * 投稿者・資格・回答がそれぞれ別のスレッドを作る。関連を1件ずつ読むと SQL 本数が増えるデータにする。
+     */
+    private function createThreadsWithRelations(int $count): void
+    {
+        for ($i = 0; $i < $count; $i++) {
+            $author = User::factory()->student()->inProgress()->create();
+            $thread = $this->createThread($author, Certification::factory()->published()->create());
+
+            QaReply::factory()->count(2)->create([
+                'qa_thread_id' => $thread->id,
+                'user_id' => $author->id,
+            ]);
+        }
+    }
+
+    /**
+     * 一覧を1回開いたときの SQL 本数を数える。前のリクエストで読み込んだ関連を持ち越さないよう、閲覧者は読み直す。
+     */
+    private function countIndexQueries(User $viewer, int $expectedTotal): int
+    {
+        $viewer = $viewer->fresh();
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $response = $this->actingAs($viewer)->get(route('qa-board.index'));
+
+        $queryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $response->assertStatus(200);
+        $this->assertSame($expectedTotal, $response->viewData('threads')->total());
+        $this->assertCount(min($expectedTotal, 20), $response->viewData('threads')->items());
+
+        return $queryCount;
     }
 
     public function test_student_can_view_index_and_create_form(): void
@@ -357,6 +396,19 @@ class QaThreadControllerTest extends TestCase
         $this->get(route('qa-board.show', $thread))->assertRedirect(route('login'));
         $this->post(route('qa-board.store'), ['title' => 'ゲスト', 'body' => 'ゲスト'])->assertRedirect(route('login'));
         $this->assertDatabaseCount('qa_threads', 1);
+    }
+
+    public function test_index_query_count_does_not_grow_with_thread_count(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+
+        $this->createThreadsWithRelations(3);
+        $fewThreadsQueryCount = $this->countIndexQueries($student, 3);
+
+        $this->createThreadsWithRelations(27);
+        $manyThreadsQueryCount = $this->countIndexQueries($student, 30);
+
+        $this->assertSame($fewThreadsQueryCount, $manyThreadsQueryCount);
     }
 
     public function test_index_accepts_keyword_with_100_characters(): void

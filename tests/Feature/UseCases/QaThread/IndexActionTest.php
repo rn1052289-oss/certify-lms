@@ -100,7 +100,7 @@ class IndexActionTest extends TestCase
         $this->assertCount(3, $result['certifications']);
     }
 
-    public function test_filters_by_certification_status_and_body_keyword(): void
+    public function test_filters_by_certification_status_and_keyword(): void
     {
         $student = User::factory()->student()->inProgress()->create();
         $certification = Certification::factory()->published()->create();
@@ -123,7 +123,7 @@ class IndexActionTest extends TestCase
 
         QaThread::factory()->create([
             'certification_id' => $certification->id,
-            'title' => '模試について',
+            'title' => '学習計画について',
             'body' => '学習計画の立て方について教えてください。',
         ]);
 
@@ -136,6 +136,89 @@ class IndexActionTest extends TestCase
 
         $this->assertSame(1, $result['threads']->total());
         $this->assertSame($matching->id, $result['threads']->items()[0]->id);
+    }
+
+    public function test_keyword_matches_title_or_body(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+        $certification = Certification::factory()->published()->create();
+
+        $titleOnly = QaThread::factory()->create([
+            'certification_id' => $certification->id,
+            'title' => '模試の見直し方',
+            'body' => '間違えた問題の復習方法を教えてください。',
+            'created_at' => now()->subDay(),
+        ]);
+
+        $bodyOnly = QaThread::factory()->create([
+            'certification_id' => $certification->id,
+            'title' => '復習の進め方',
+            'body' => '模試の結果をどう活かせばよいですか。',
+        ]);
+
+        QaThread::factory()->create([
+            'certification_id' => $certification->id,
+            'title' => '学習計画について',
+            'body' => '学習計画の立て方について教えてください。',
+        ]);
+
+        $action = $this->app->make(IndexAction::class);
+        $result = $action($student, ['keyword' => '模試']);
+
+        $this->assertSame(2, $result['threads']->total());
+        $this->assertSame(
+            [$bodyOnly->id, $titleOnly->id],
+            collect($result['threads']->items())->pluck('id')->all(),
+        );
+    }
+
+    public function test_title_keyword_keeps_certification_status_and_visibility_filters(): void
+    {
+        $student = User::factory()->student()->inProgress()->create();
+        $certification = Certification::factory()->published()->create();
+        $otherCertification = Certification::factory()->published()->create();
+        $draftCertification = Certification::factory()->draft()->create();
+
+        $matching = QaThread::factory()->create([
+            'certification_id' => $certification->id,
+            'title' => '模試の見直し方',
+            'body' => '間違えた問題の復習方法を教えてください。',
+        ]);
+
+        QaThread::factory()->resolved()->create([
+            'certification_id' => $certification->id,
+            'title' => '模試の見直し方',
+            'body' => '間違えた問題の復習方法を教えてください。',
+        ]);
+
+        QaThread::factory()->create([
+            'certification_id' => $otherCertification->id,
+            'title' => '模試の見直し方',
+            'body' => '間違えた問題の復習方法を教えてください。',
+        ]);
+
+        QaThread::factory()->create([
+            'certification_id' => $draftCertification->id,
+            'title' => '模試の見直し方',
+            'body' => '間違えた問題の復習方法を教えてください。',
+        ]);
+
+        $action = $this->app->make(IndexAction::class);
+
+        $filtered = $action($student, [
+            'certification_id' => $certification->id,
+            'status' => QaThreadStatus::Unresolved->value,
+            'keyword' => '模試',
+        ]);
+        $this->assertSame(1, $filtered['threads']->total());
+        $this->assertSame($matching->id, $filtered['threads']->items()[0]->id);
+
+        $keywordOnly = $action($student, ['keyword' => '模試']);
+        $this->assertSame(3, $keywordOnly['threads']->total());
+        $this->assertNotContains(
+            $draftCertification->id,
+            collect($keywordOnly['threads']->items())->pluck('certification_id')->all(),
+        );
     }
 
     public function test_loads_display_relations_reply_counts_and_newest_first(): void
