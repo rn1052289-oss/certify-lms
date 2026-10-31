@@ -197,6 +197,8 @@ OAuth トークンを DB へ暗号化して保存する対応は今回の対象�
 
 学習中の受講生本人のみ利用できます。Gemini の API キーを取得し、利用する環境の `.env` に以下を設定してください。キーはコミットしないでください。
 
+API キーは [Google AI Studio の API キー画面](https://aistudio.google.com/apikey) で、Google アカウントでログインして「API キーを作成」から発行します。
+
 - `AI_CHAT_ENABLED` — 既定は `false`（無効）。`true` にすると AI 相談の画面・ナビ・小窓を利用できます
 - `GEMINI_API_KEY` — Gemini の API キー。未設定の場合は送信できない旨を案内します
 - `GEMINI_MODEL` — 既定は `gemini-3.5-flash-lite`。対象プロジェクトで利用できるモデルを指定してください
@@ -235,9 +237,9 @@ OAuth トークンを DB へ暗号化して保存する対応は今回の対象�
 
 設定キャッシュを使用している場合は、変更後に `sail artisan config:clear` を実行してください。画面から新しい質問を送ると実際の Gemini API を呼び出します。
 
-### Stripe（追加面談購入）
+### Stripe（追加面談購入・S-A-03）
 
-- `STRIPE_SECRET` — Stripe の検証用シークレットキーを設定します。未設定の場合は購入画面への送信を受け付けません
+- `STRIPE_SECRET` — Stripe の検証用シークレットキーを設定します。[Stripe Dashboard](https://dashboard.stripe.com/test/apikeys) をサンドボックス（テスト環境）に切り替え、「開発者 → API キー」の「シークレットキー」（`sk_test_` で始まる値）を使います。未設定の場合は購入画面への送信を受け付けません
 - `STRIPE_WEBHOOK_SECRET` — 決済通知の署名検証に使用します。ローカルでは下記の `stripe listen` が表示する値を設定します。Dashboard に登録した通知先の値とは別です
 
 Stripe のサンドボックスと、本プロジェクト専用の Stripe CLI 設定を使用してください。
