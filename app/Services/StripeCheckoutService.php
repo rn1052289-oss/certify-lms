@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\Payment;
 use Stripe\Checkout\Session;
+use Stripe\Exception\ApiErrorException;
 use Stripe\StripeClient;
 
 /**
@@ -13,6 +14,11 @@ use Stripe\StripeClient;
  */
 class StripeCheckoutService
 {
+    /**
+     * Payment 1 件分の Checkout Session を作成する。完了後は購入完了画面、取消時は面談パック選択画面へ戻す。
+     *
+     * @throws ApiErrorException
+     */
     public function create(Payment $payment): Session
     {
         $stripe = new StripeClient([

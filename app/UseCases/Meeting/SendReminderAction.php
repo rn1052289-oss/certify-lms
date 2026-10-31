@@ -15,9 +15,20 @@ use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * 面談 1 件のリマインダー(eve: 前日 / one_hour_before: 1 時間前)を受講生とコーチへ送るユースケース。
+ *
+ * 面談行のロック後に reserved かつ対象時間内かを再確認し、受講中の当事者にだけ送る。
+ * 送信記録(MeetingReminderDelivery)で受信者 × 時間帯ごとの二重送信を防ぐ。アプリ内通知はロック内で送り、
+ * メールは面談のロックを解放してから受信者ごとに送る。
+ */
 final class SendReminderAction
 {
-    /** @return array{sent: int, failed: int} */
+    /**
+     * @param string $window eve / one_hour_before
+     *
+     * @return array{sent: int, failed: int}
+     */
     public function __invoke(Meeting $meeting, string $window, CarbonInterface $now): array
     {
         $result = DB::transaction(function () use ($meeting, $window, $now): array {

@@ -8,8 +8,16 @@ use App\Models\Certificate;
 use Mpdf\Mpdf;
 use Mpdf\Output\Destination;
 
+/**
+ * 修了証 PDF の生成を提供する Service。
+ *
+ * `certificates.pdf` の Blade を mPDF(A4 / 日本語フォント sun-exta)で PDF に変換する。ファイルには保存せず、バイナリ文字列を返す。
+ */
 class CertificatePdfService
 {
+    /**
+     * 修了証 1 件分の PDF を生成し、バイナリ文字列で返す。
+     */
     public function generate(Certificate $certificate): string
     {
         $certificate->loadMissing(['user', 'certification']);

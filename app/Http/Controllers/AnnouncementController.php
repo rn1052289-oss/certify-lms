@@ -12,6 +12,9 @@ use App\UseCases\Announcement\StoreAction;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
 
+/**
+ * 管理者のお知らせ (Announcement) 一覧 / 作成フォーム / 配信 / 配信結果表示 Controller。
+ */
 class AnnouncementController extends Controller
 {
     public function index(IndexAction $action): View

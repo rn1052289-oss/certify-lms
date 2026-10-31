@@ -14,10 +14,24 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
-/** 受付内容と対象者を同じトランザクションで確定し、コミット後に配信を投入する。 */
+/**
+ * 受付内容と対象者を同じトランザクションで確定し、コミット後に配信を投入する。
+ *
+ * お知らせを受け付け、配信ジョブを投入するユースケース。
+ *
+ * 処理フロー(1 〜 3 は DB::transaction() 内):
+ * 1. Announcement を作成する
+ * 2. 受付時点の配信対象(受講中の受講生。資格指定ならその資格を学習中の受講生)と通知 ID を
+ *    announcement_recipients に INSERT SELECT で保存する(HTTP 内で人数分のループを回さない)
+ * 3. コミット後に DispatchAnnouncement を投入する。投入に失敗しても受付は残し、再開コマンドで投入できる
+ */
 final class StoreAction
 {
-    /** @return array{announcement: Announcement} */
+    /**
+     * @param array{title: string, body: string, target_type: string, target_certification_id?: string, target_user_id?: string} $validated
+     *
+     * @return array{announcement: Announcement}
+     */
     public function __invoke(User $admin, array $validated): array
     {
         return DB::transaction(function () use ($admin, $validated): array {

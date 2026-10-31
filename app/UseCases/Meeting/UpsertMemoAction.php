@@ -10,9 +10,16 @@ use App\Models\Meeting;
 use App\Models\MeetingMemo;
 use Illuminate\Support\Facades\DB;
 
-/** 担当コーチの面談メモを作成・更新するユースケース。 */
+/**
+ * 担当コーチの面談メモを作成・更新するユースケース。
+ *
+ * 担当コーチの面談メモを作成・更新するユースケース。reserved / completed の面談のみ(canceled には残せない)。
+ */
 final class UpsertMemoAction
 {
+    /**
+     * @throws MeetingStatusTransitionException canceled の面談
+     */
     public function __invoke(Meeting $meeting, string $body): void
     {
         DB::transaction(function () use ($meeting, $body) {

@@ -10,6 +10,12 @@ use App\Models\User;
 use App\Services\AiChatContextService;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * 受講生の AI 相談会話を作成するユースケース。
+ *
+ * 同じ教材 × 受講登録の会話が既にあれば新規作成せず、本人の最新の会話を返す(同時開始も受講生行のロックで直列化)。
+ * 小窓からの開始では、会話の作成と最初の質問の受付を同じトランザクションで確定する(withMessage)。
+ */
 class StoreConversationAction
 {
     public function __construct(
@@ -17,7 +23,15 @@ class StoreConversationAction
         private readonly SendMessageAction $send,
     ) {}
 
-    /** @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, conversation: AiChatConversation, upstream_status: ?int} */
+    /**
+     * 会話を作成し、最初の質問を受け付けて AI の回答まで返す。
+     *
+     * 受付前に拒否された場合(503 / 429 など)は会話の作成ごと取り消し、空の会話を残さない。Gemini はコミット後に呼ぶ。
+     *
+     * @param array{section_id?: ?string, enrollment_id?: ?string, message: string} $data
+     *
+     * @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, conversation: AiChatConversation, upstream_status: ?int}
+     */
     public function withMessage(User $user, array $data): array
     {
         [$conversation, $prepared] = DB::transaction(function () use ($user, $data): array {
@@ -31,6 +45,9 @@ class StoreConversationAction
         return $this->send->complete($conversation, $prepared);
     }
 
+    /**
+     * @param array{section_id?: ?string, enrollment_id?: ?string} $data
+     */
     public function __invoke(User $user, array $data): AiChatConversation
     {
         return DB::transaction(function () use ($user, $data): AiChatConversation {

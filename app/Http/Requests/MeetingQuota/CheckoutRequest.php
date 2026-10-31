@@ -10,6 +10,13 @@ use App\Enums\UserStatus;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
+/**
+ * 受講生の追加面談購入(Stripe Checkout 開始)リクエスト。
+ *
+ * 受講中の受講生のみ。公開中(published)の面談パックを 1 つ受け取る。
+ *
+ * @see MeetingQuotaCheckoutController::create()
+ */
 class CheckoutRequest extends FormRequest
 {
     public function authorize(): bool
@@ -18,6 +25,9 @@ class CheckoutRequest extends FormRequest
             && $this->user()?->status === UserStatus::InProgress;
     }
 
+    /**
+     * @return array<string, array<int, mixed>>
+     */
     public function rules(): array
     {
         return [

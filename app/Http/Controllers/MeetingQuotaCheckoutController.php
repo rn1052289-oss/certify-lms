@@ -12,6 +12,12 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
+/**
+ * 受講生の追加面談購入の HTTP エントリポイント。
+ *
+ * 面談パック選択 / Stripe Checkout への遷移 / 購入完了画面を扱う。面談回数の加算は完了画面では行わず、
+ * 署名検証済みの決済完了通知を受けた `StripeWebhookController` 側で行う。
+ */
 class MeetingQuotaCheckoutController extends Controller
 {
     public function select(): View

@@ -16,6 +16,12 @@ use Illuminate\Http\Request;
 use Illuminate\View\View;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
+/**
+ * 受講生の AI 相談会話 (AiChatConversation) の HTTP エントリポイント。
+ *
+ * 一覧 / 作成 / 表示 / タイトル変更 / 削除を扱い、全画面からの画面遷移と小窓からの JSON リクエストの両方に応答する。
+ * 認可は $this->authorize() または FormRequest::authorize()。
+ */
 class AiChatConversationController extends Controller
 {
     public function index(Request $request): RedirectResponse|View

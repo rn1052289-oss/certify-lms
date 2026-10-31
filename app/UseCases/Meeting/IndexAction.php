@@ -9,7 +9,13 @@ use App\Models\User;
 use App\Services\MeetingQuotaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
-/** 受講生本人の面談一覧と残面談回数を取得するユースケース。 */
+/**
+ * 受講生本人の面談一覧と残面談回数を取得するユースケース。
+ *
+ * 受講生本人の面談一覧と残面談回数を取得するユースケース。
+ *
+ * filter: upcoming(既定) / past / all。いずれも予約日時の新しい順に 20 件ずつ返す。
+ */
 final class IndexAction
 {
     public function __construct(

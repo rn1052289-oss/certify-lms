@@ -8,6 +8,9 @@ use App\Models\Certificate;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
+/**
+ * 修了証 PDF のダウンロード Controller。認可は `CertificatePolicy::download` に委譲する。
+ */
 class CertificateDownloadController extends Controller
 {
     public function __invoke(Certificate $certificate): StreamedResponse

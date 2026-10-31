@@ -10,8 +10,19 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
+/**
+ * 本人のプロフィール画像を保存するユースケース。
+ *
+ * 処理フロー:
+ * 1. avatars/{user_id} に ULID のファイル名で保存する
+ * 2. avatar_url を更新する。更新に失敗したら保存した画像を削除して例外を投げ直す
+ * 3. 本人のディレクトリにある旧画像だけを削除する
+ */
 final class StoreAction
 {
+    /**
+     * @throws \RuntimeException 画像を保存できなかった
+     */
     public function __invoke(User $user, UploadedFile $file): void
     {
         $directory = "avatars/{$user->id}";

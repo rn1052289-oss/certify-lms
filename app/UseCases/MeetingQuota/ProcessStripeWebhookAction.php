@@ -16,6 +16,11 @@ use Stripe\Event;
  */
 final class ProcessStripeWebhookAction
 {
+    /**
+     * Checkout の完了・非同期決済の成否・期限切れを Payment に反映する。
+     *
+     * 正常完了時は購入時に控えた回数を加算し、同じ通知を再度受け取っても二重に加算しない。対象外のイベントは何もしない。
+     */
     public function __invoke(Event $event): void
     {
         if (! in_array($event->type, [

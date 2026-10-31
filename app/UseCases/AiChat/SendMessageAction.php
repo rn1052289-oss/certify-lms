@@ -16,6 +16,17 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
+/**
+ * AI 相談の質問を受け付け、Gemini の回答を保存するユースケース。
+ *
+ * 処理フロー:
+ * 1. prepare: API キー未設定は 503、応答待ちの発言があれば 409、日次上限超過は 429。受付時に利用回数を加算し、
+ *    質問(completed)と回答枠(pending)を保存する
+ * 2. complete: トランザクションの外で Gemini を呼び、回答を completed で保存する。失敗時は error で保存し、pending を残さない
+ * 3. 初回の正常回答のあと、設定が有効で手動編集されていなければタイトルを 1 回だけ自動生成する
+ *
+ * Gemini へ送った後の失敗は、質問・エラーの履歴と利用回数を残す。
+ */
 class SendMessageAction
 {
     public function __construct(
@@ -23,13 +34,21 @@ class SendMessageAction
         private readonly GeminiClient $gemini,
     ) {}
 
-    /** @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, conversation: AiChatConversation, upstream_status: ?int} */
+    /**
+     * 質問を受け付けて Gemini の回答まで返す(prepare + complete)。
+     *
+     * @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, conversation: AiChatConversation, upstream_status: ?int}
+     */
     public function __invoke(User $user, AiChatConversation $conversation, string $content): array
     {
         return $this->complete($conversation, $this->prepare($user, $conversation, $content));
     }
 
-    /** @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, system_prompt: string} */
+    /**
+     * 質問を受け付け、Gemini へ送る前の保存までを行う。
+     *
+     * @return array{user_message: AiChatMessage, assistant_message: AiChatMessage, system_prompt: string}
+     */
     public function prepare(User $user, AiChatConversation $conversation, string $content): array
     {
         abort_if(trim((string) config('ai-chat.gemini.api_key')) === '', 503, 'AI 相談は現在利用できません。API キーが設定されていません。');

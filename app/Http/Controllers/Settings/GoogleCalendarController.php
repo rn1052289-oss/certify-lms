@@ -14,6 +14,9 @@ use Illuminate\Support\Str;
 use Throwable;
 
 /** role:coach の本人だけが OAuth を開始・完了・解除できる。 */
+/**
+ * コーチの Google Calendar 連携(OAuth 同意画面への遷移 / callback での接続 / 連携解除) Controller。
+ */
 class GoogleCalendarController extends Controller
 {
     public function redirect(Request $request, GoogleCalendarClient $client): RedirectResponse
